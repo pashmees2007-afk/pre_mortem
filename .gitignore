@@ -1,0 +1,17 @@
+# Dependencies and build output
+node_modules/
+.next/
+dist/
+coverage/
+*.tsbuildinfo
+
+# Secrets and local configuration
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# OS/editor artifacts
+.DS_Store
+.idea/
+.vscode/
