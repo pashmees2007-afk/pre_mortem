@@ -1,4 +1,4 @@
-import { analysisSchema, type Analysis, type MitigationResponse } from "./contracts";
+import { analysisSchema, type Analysis, type MitigationResponse, type MockAction } from "./contracts";
 
 async function request<T>(path: string, init?: RequestInit, schema?: { parse: (input: unknown) => T }): Promise<T> {
   const response = await fetch(`/api/backend${path}`, {
@@ -20,4 +20,12 @@ export async function getAnalysis(id: string): Promise<Analysis> {
 
 export async function submitMitigation(riskId: string, answer: string): Promise<MitigationResponse> {
   return request(`/v1/risks/${encodeURIComponent(riskId)}/mitigations`, { method: "POST", body: JSON.stringify({ answer }) });
+}
+
+export async function approveMockAction(riskId: string, input: { owner: string; dueDate: string; approvalNote: string }): Promise<MockAction> {
+  return request(`/v1/risks/${encodeURIComponent(riskId)}/actions`, { method: "POST", body: JSON.stringify(input) });
+}
+
+export async function verifyMockAction(actionId: string, input: { outcome: "verified" | "failed"; note: string }): Promise<{ id: string; status: "verified" | "replan_required"; outcome: "verified" | "failed" }> {
+  return request(`/v1/actions/${encodeURIComponent(actionId)}/verification`, { method: "POST", body: JSON.stringify(input) });
 }

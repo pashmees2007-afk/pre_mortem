@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { CreateAnalysisInput, MitigationInput } from "./contracts.js";
+import { CreateAnalysisInput, MitigationInput, MockActionInput, VerificationInput } from "./contracts.js";
 
 const valid = {
   projectId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
@@ -24,5 +24,15 @@ describe("browser request contracts", () => {
   it("requires a bounded mitigation answer", () => {
     expect(MitigationInput.parse({ answer: "The named release owner tested rollback in staging and documented a monitoring alert." }).answer).toContain("release owner");
     expect(() => MitigationInput.parse({ answer: "no" })).toThrow();
+  });
+
+  it("accepts a narrow human-approved mock action and rejects malformed control fields", () => {
+    expect(MockActionInput.parse({ owner: "Maria", dueDate: "2026-09-02", approvalNote: "Maria approves this reversible mock action." }).owner).toBe("Maria");
+    expect(() => MockActionInput.parse({ owner: "M", dueDate: "2 September", approvalNote: "ok" })).toThrow();
+  });
+
+  it("accepts only a verified or failed action outcome with an evidence note", () => {
+    expect(VerificationInput.parse({ outcome: "verified", note: "The gateway canary ran in staging and the rollback condition was checked." }).outcome).toBe("verified");
+    expect(() => VerificationInput.parse({ outcome: "ignored", note: "no" })).toThrow();
   });
 });

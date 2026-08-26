@@ -40,6 +40,29 @@ export const riskSchema = z.object({
   uncertainty: z.enum(["low", "moderate", "high"]),
 });
 
+export const investigationPlanSchema = z.object({
+  summary: z.string(),
+  angles: z.array(z.object({ category: z.string(), branch: z.enum(["A", "B"]), reason: z.string() })),
+  researchQueries: z.object({ A: z.string(), B: z.string() }),
+});
+
+export const criticSchema = z.object({
+  finding: z.string(),
+  evidenceGaps: z.array(z.string()),
+  nextCheck: z.string(),
+});
+
+export const traceEventSchema = z.object({
+  skill: z.string(), stage: z.string(), status: z.enum(["completed", "attention", "approved", "verified", "failed", "replan"]),
+  detail: z.string(), metadata: z.record(z.string(), z.unknown()).default({}), createdAt: z.string(),
+});
+
+export const actionSchema = z.object({
+  id: z.string().uuid(), riskId: z.string().uuid(), owner: z.string(), dueDate: z.string(), approvalNote: z.string(),
+  status: z.enum(["approved", "verified", "replan_required"]), verificationNote: z.string().nullable().optional(),
+  createdAt: z.string().optional(), verifiedAt: z.string().nullable().optional(), riskTitle: z.string().optional(),
+});
+
 export const analysisSchema = z.object({
   id: z.string().uuid(),
   status: z.enum(["queued", "running", "succeeded", "failed"]),
@@ -57,11 +80,17 @@ export const analysisSchema = z.object({
     displayStatus: z.enum(["corroborated", "meaningful_disagreement", "insufficient_evidence"]),
     explanation: z.string(),
   }).nullable(),
+  investigationPlan: investigationPlanSchema.nullable().default(null),
+  critic: criticSchema.nullable().default(null),
+  trace: z.array(traceEventSchema).default([]),
+  actions: z.array(actionSchema).default([]),
 });
 
 export type Analysis = z.infer<typeof analysisSchema>;
 export type Risk = z.infer<typeof riskSchema>;
 export type Source = z.infer<typeof sourceSchema>;
+export type AgentTraceEvent = z.infer<typeof traceEventSchema>;
+export type MockAction = z.infer<typeof actionSchema>;
 export type MitigationResponse = {
   assessment: { evidence: "verified" | "partial" | "unverified" | "absent"; rationale: string; gaps: string[] };
   before: number; after: number; delta: number; rationale: string;

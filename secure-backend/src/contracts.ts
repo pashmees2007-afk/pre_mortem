@@ -23,6 +23,36 @@ export const RiskCategory = z.enum([
 export const Uncertainty = z.enum(["low", "moderate", "high"]);
 export const ControlEvidence = z.enum(["verified", "partial", "unverified", "absent"]);
 
+export const InvestigationPlanSchema = z.object({
+  summary: z.string().min(20).max(400),
+  angles: z.array(z.object({
+    category: RiskCategory,
+    branch: z.enum(["A", "B"]),
+    reason: z.string().min(12).max(280),
+  }).strict()).min(2).max(4),
+  researchQueries: z.object({
+    A: z.string().min(12).max(900),
+    B: z.string().min(12).max(900),
+  }).strict(),
+}).strict();
+
+export const CriticSchema = z.object({
+  finding: z.string().min(20).max(400),
+  evidenceGaps: z.array(z.string().min(8).max(240)).max(4),
+  nextCheck: z.string().min(12).max(280),
+}).strict();
+
+export const MockActionInput = z.object({
+  owner: z.string().trim().min(2).max(120),
+  dueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Due date must use YYYY-MM-DD"),
+  approvalNote: z.string().trim().min(8).max(800),
+}).strict();
+
+export const VerificationInput = z.object({
+  outcome: z.enum(["verified", "failed"]),
+  note: z.string().trim().min(8).max(1_200),
+}).strict();
+
 export const PlanFactsSchema = z.object({
   outcome: z.string().min(8).max(400),
   timeline: z.string().min(2).max(150),
@@ -91,6 +121,8 @@ export const ControlAssessmentSchema = z.object({
 }).strict();
 
 export type PlanFacts = z.infer<typeof PlanFactsSchema>;
+export type InvestigationPlan = z.infer<typeof InvestigationPlanSchema>;
+export type CriticFinding = z.infer<typeof CriticSchema>;
 export type EvidenceSource = z.infer<typeof EvidenceSourceSchema>;
 export type Scenario = z.infer<typeof ScenarioSchema>;
 export type Synthesis = z.infer<typeof SynthesisSchema>;
@@ -101,6 +133,19 @@ export type Comparison = z.infer<typeof ComparatorSchema> & {
 };
 
 export const jsonSchemas = {
+  investigationPlan: {
+    type: "object", additionalProperties: false,
+    properties: {
+      summary: { type: "string" },
+      angles: { type: "array", items: {
+        type: "object", additionalProperties: false,
+        properties: {
+          category: { type: "string", enum: RiskCategory.options }, branch: { type: "string", enum: ["A", "B"] }, reason: { type: "string" },
+        }, required: ["category", "branch", "reason"],
+      } },
+      researchQueries: { type: "object", additionalProperties: false, properties: { A: { type: "string" }, B: { type: "string" } }, required: ["A", "B"] },
+    }, required: ["summary", "angles", "researchQueries"],
+  },
   planFacts: {
     type: "object", additionalProperties: false,
     properties: {
@@ -151,5 +196,11 @@ export const jsonSchemas = {
       evidence: { type: "string", enum: ControlEvidence.options }, rationale: { type: "string" },
       gaps: { type: "array", items: { type: "string" } },
     }, required: ["evidence", "rationale", "gaps"],
+  },
+  critic: {
+    type: "object", additionalProperties: false,
+    properties: {
+      finding: { type: "string" }, evidenceGaps: { type: "array", items: { type: "string" } }, nextCheck: { type: "string" },
+    }, required: ["finding", "evidenceGaps", "nextCheck"],
   },
 } as const;

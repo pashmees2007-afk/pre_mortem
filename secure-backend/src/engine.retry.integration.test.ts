@@ -47,6 +47,9 @@ describe("engine retry recovery", () => {
     const repo = {
       getRunForWorker: vi.fn().mockResolvedValueOnce(run).mockResolvedValueOnce(run),
       clearTransientArtifacts: vi.fn().mockResolvedValue(undefined),
+      saveInvestigationPlan: vi.fn().mockResolvedValue(undefined),
+      saveCritic: vi.fn().mockResolvedValue(undefined),
+      recordTrace: vi.fn().mockResolvedValue(undefined),
       saveEvidence: vi.fn().mockResolvedValue(undefined),
       completeRun: vi.fn().mockResolvedValue(undefined),
       failRun: vi.fn().mockResolvedValue(undefined),
@@ -55,9 +58,11 @@ describe("engine retry recovery", () => {
       webSearch: vi.fn().mockRejectedValueOnce(new Error("temporary retrieval outage")).mockResolvedValue(providerSearch),
       strictJson: vi.fn(async (args: { name: string; user: string }) => {
         if (args.name === "plan_facts") return facts;
+        if (args.name === "investigation_plan") return { summary: "Inspect delivery timing and rollback readiness with independent evidence branches.", angles: [{ category: "scope_control", branch: "A", reason: "Late validation may consume the remaining delivery buffer." }, { category: "architecture_reliability", branch: "B", reason: "Rollback readiness is not proven in the plan." }], researchQueries: { A: "delivery capacity validation postmortem", B: "rollback readiness integration postmortem" } };
         if (args.name === "scenario_a") return scenario("scope_control", idsFromPrompt(args.user));
         if (args.name === "scenario_b") return scenario("architecture_reliability", idsFromPrompt(args.user));
         if (args.name === "scenario_comparison") return { semanticRelation: "contradicts", explanation: "The branches identify separate primary mechanisms." };
+        if (args.name === "evidence_critic") return { finding: "The plan does not prove the gateway configuration lead time.", evidenceGaps: ["No dated gateway commitment."], nextCheck: "Request a written configuration date." };
         if (args.name === "risk_synthesis") {
           const [first] = idsFromPrompt(args.user);
           return { risks: [

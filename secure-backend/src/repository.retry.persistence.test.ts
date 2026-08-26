@@ -40,8 +40,8 @@ describe("repository retry recovery with persistence", () => {
     const database = newDb({ autoCreateForeignKeyIndices: true });
     const { Pool } = database.adapters.createPg();
     const pool = new Pool();
-    const migration = readFileSync(fileURLToPath(new URL("../migrations/001_initial.sql", import.meta.url)), "utf8");
-    for (const statement of migration.split(";").map((value) => value.trim()).filter(Boolean)) await pool.query(statement);
+    const migrations = ["001_initial.sql", "002_agentic_mvp.sql"].map((file) => readFileSync(fileURLToPath(new URL(`../migrations/${file}`, import.meta.url)), "utf8"));
+    for (const statement of migrations.join("\n").split(";").map((value) => value.trim()).filter(Boolean)) await pool.query(statement);
     const repo = new Repository(pool as any);
 
     await pool.query(`INSERT INTO organizations (id, name) VALUES ($1, 'Acme')`, [orgId]);

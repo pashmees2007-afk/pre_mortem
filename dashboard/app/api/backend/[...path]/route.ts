@@ -1,7 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { cookies } from "next/headers";
 
-const allowed = [/^v1\/analyses(?:\/[0-9a-f-]{36})?$/i, /^v1\/risks\/[0-9a-f-]{36}\/mitigations$/i];
+const allowed = [
+  /^v1\/analyses(?:\/[0-9a-f-]{36})?$/i,
+  /^v1\/risks\/[0-9a-f-]{36}\/mitigations$/i,
+  /^v1\/risks\/[0-9a-f-]{36}\/actions$/i,
+  /^v1\/actions\/[0-9a-f-]{36}\/verification$/i,
+];
 
 async function forward(request: NextRequest, context: { params: Promise<{ path: string[] }> }) {
   const { path } = await context.params;

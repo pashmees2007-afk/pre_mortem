@@ -1,6 +1,6 @@
 import { Router } from "express";
 import type { Config } from "./config.js";
-import { CreateAnalysisInput, MitigationInput } from "./contracts.js";
+import { CreateAnalysisInput, MitigationInput, MockActionInput, VerificationInput } from "./contracts.js";
 import type { PreMortemEngine } from "./engine.js";
 import { AppError } from "./errors.js";
 import { requireUser } from "./identity.js";
@@ -39,6 +39,26 @@ export function createRouter(args: { config: Config; repo: Repository; queue: An
       if (!riskId) throw new AppError(400, "INVALID_REQUEST", "Risk ID is required");
       const result = await args.engine.assessMitigation({ riskId, actor: req.actor!, answer: input.answer });
       res.status(201).json(result);
+    } catch (error) { next(error); }
+  });
+
+  router.post("/v1/risks/:riskId/actions", auth, async (req, res, next) => {
+    try {
+      const input = MockActionInput.parse(req.body);
+      const riskId = Array.isArray(req.params.riskId) ? req.params.riskId[0] : req.params.riskId;
+      if (!riskId) throw new AppError(400, "INVALID_REQUEST", "Risk ID is required");
+      const action = await args.repo.createMockAction({ riskId, actor: req.actor!, ...input });
+      res.status(201).json(action);
+    } catch (error) { next(error); }
+  });
+
+  router.post("/v1/actions/:actionId/verification", auth, async (req, res, next) => {
+    try {
+      const input = VerificationInput.parse(req.body);
+      const actionId = Array.isArray(req.params.actionId) ? req.params.actionId[0] : req.params.actionId;
+      if (!actionId) throw new AppError(400, "INVALID_REQUEST", "Action ID is required");
+      const result = await args.repo.verifyMockAction({ actionId, actor: req.actor!, ...input });
+      res.json(result);
     } catch (error) { next(error); }
   });
 

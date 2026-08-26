@@ -11,16 +11,17 @@ function classifyTier(hostname: string): 1 | 2 | 3 {
   return 3;
 }
 
-function branchQuery(facts: PlanFacts, branch: "A" | "B") {
+function branchQuery(facts: PlanFacts, branch: "A" | "B", plannedQuery?: string) {
+  if (plannedQuery) return plannedQuery.slice(0, 900);
   const focus = branch === "A"
     ? `scope planning delivery capacity requirements ${facts.timeline} ${facts.team}`
     : `architecture dependencies reliability operational readiness ${facts.technicalChanges.join(" ")}`;
   return `${facts.outcome} engineering project failure postmortem ${focus}`.slice(0, 900);
 }
 
-export async function retrieveEvidence(args: { client: GroqClient; facts: PlanFacts; branch: "A" | "B"; actorId: string; includeDomains?: string[] }): Promise<EvidenceSource[]> {
+export async function retrieveEvidence(args: { client: GroqClient; facts: PlanFacts; branch: "A" | "B"; actorId: string; includeDomains?: string[]; plannedQuery?: string }): Promise<EvidenceSource[]> {
   const response = await args.client.webSearch({
-    query: branchQuery(args.facts, args.branch),
+    query: branchQuery(args.facts, args.branch, args.plannedQuery),
     actorId: args.actorId,
     includeDomains: args.includeDomains,
   });

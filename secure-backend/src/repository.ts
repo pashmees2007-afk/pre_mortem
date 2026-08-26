@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
 import type { Actor } from "./identity.js";
-import type { Comparison, EvidenceSource, PlanFacts, Scenario, Synthesis } from "./contracts.js";
+import type { Comparison, CriticFinding, EvidenceSource, InvestigationPlan, PlanFacts, Scenario, Synthesis } from "./contracts.js";
 import { AppError } from "./errors.js";
 import { scoreSeverity } from "./scoring.js";
 import { transaction } from "./db.js";
@@ -18,6 +18,7 @@ export type AnalysisRun = {
 
 export type StoredRisk = {
   id: string;
+  analysisRunId: string;
   category: string;
   title: string;
   explanation: string;
@@ -28,6 +29,8 @@ export type StoredRisk = {
   mitigation: string;
   uncertainty: string;
 };
+
+type TraceStatus = "completed" | "attention" | "approved" | "verified" | "failed" | "replan";
 
 export class Repository {
   constructor(private readonly pool: Pool) {}
@@ -81,8 +84,35 @@ export class Repository {
     });
   }
 
+  async saveInvestigationPlan(runId: string, plan: InvestigationPlan) {
+    await this.pool.query(
+      `INSERT INTO investigation_plans (analysis_run_id, plan_json) VALUES ($1,$2::jsonb)
+       ON CONFLICT (analysis_run_id) DO UPDATE SET plan_json = EXCLUDED.plan_json`,
+      [runId, JSON.stringify(plan)],
+    );
+  }
+
+  async saveCritic(runId: string, finding: CriticFinding) {
+    await this.pool.query(
+      `INSERT INTO critic_records (analysis_run_id, finding, evidence_gaps, next_check) VALUES ($1,$2,$3::jsonb,$4)
+       ON CONFLICT (analysis_run_id) DO UPDATE SET finding = EXCLUDED.finding, evidence_gaps = EXCLUDED.evidence_gaps, next_check = EXCLUDED.next_check`,
+      [runId, finding.finding, JSON.stringify(finding.evidenceGaps), finding.nextCheck],
+    );
+  }
+
+  async recordTrace(args: { runId: string; skill: string; stage: string; status: TraceStatus; detail: string; metadata?: Record<string, unknown> }) {
+    await this.pool.query(
+      `INSERT INTO agent_trace_events (id, analysis_run_id, skill, stage, status, detail, metadata)
+       VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb)`,
+      [randomUUID(), args.runId, args.skill, args.stage, args.status, args.detail.slice(0, 800), JSON.stringify(args.metadata ?? {})],
+    );
+  }
+
   async clearTransientArtifacts(runId: string) {
     await transaction(this.pool, async (client) => {
+      await client.query(`DELETE FROM agent_trace_events WHERE analysis_run_id = $1`, [runId]);
+      await client.query(`DELETE FROM critic_records WHERE analysis_run_id = $1`, [runId]);
+      await client.query(`DELETE FROM investigation_plans WHERE analysis_run_id = $1`, [runId]);
       await client.query(`DELETE FROM disagreement_records WHERE analysis_run_id = $1`, [runId]);
       await client.query(`DELETE FROM branch_runs WHERE analysis_run_id = $1`, [runId]);
       await client.query(`DELETE FROM evidence_sources WHERE analysis_run_id = $1`, [runId]);
@@ -142,18 +172,25 @@ export class Repository {
       [runId, actor.org_id],
     );
     if (!run.rowCount) throw new AppError(404, "ANALYSIS_NOT_FOUND", "Analysis not found");
-    const [sources, branches, risks, disagreement] = await Promise.all([
+    const [sources, branches, risks, disagreement, planner, critic, trace, actions] = await Promise.all([
       this.pool.query(`SELECT id, branch, url, hostname, title, publisher, snippet, provider_rank AS "providerRank", source_tier AS "sourceTier", status, retrieved_at AS "retrievedAt" FROM evidence_sources WHERE analysis_run_id = $1 AND status = 'retrieved' ORDER BY branch, provider_rank DESC NULLS LAST`, [runId]),
       this.pool.query(`SELECT branch, primary_category AS "primaryCategory", root_cause AS "rootCause", scenario_json AS scenario FROM branch_runs WHERE analysis_run_id = $1 ORDER BY branch`, [runId]),
       this.pool.query(`SELECT r.id, r.category, r.title, r.explanation, r.impact, r.likelihood, r.severity, r.mitigation, r.uncertainty, COALESCE(array_agg(re.evidence_source_id) FILTER (WHERE re.evidence_source_id IS NOT NULL), '{}') AS "evidenceIds" FROM risk_items r LEFT JOIN risk_evidence re ON re.risk_item_id = r.id WHERE r.analysis_run_id = $1 GROUP BY r.id ORDER BY r.severity DESC, r.created_at`, [runId]),
       this.pool.query(`SELECT category_relation AS "categoryRelation", claim_relation AS "semanticRelation", evidence_overlap AS "evidenceOverlap", display_status AS "displayStatus", explanation FROM disagreement_records WHERE analysis_run_id = $1`, [runId]),
+      this.pool.query(`SELECT plan_json AS plan FROM investigation_plans WHERE analysis_run_id = $1`, [runId]),
+      this.pool.query(`SELECT finding, evidence_gaps AS "evidenceGaps", next_check AS "nextCheck" FROM critic_records WHERE analysis_run_id = $1`, [runId]),
+      this.pool.query(`SELECT skill, stage, status, detail, metadata, created_at AS "createdAt" FROM agent_trace_events WHERE analysis_run_id = $1 ORDER BY created_at ASC`, [runId]),
+      this.pool.query(`SELECT a.id, a.risk_item_id AS "riskId", a.owner, TO_CHAR(a.due_date, 'YYYY-MM-DD') AS "dueDate", a.approval_note AS "approvalNote", a.status, a.verification_note AS "verificationNote", a.created_at AS "createdAt", a.verified_at AS "verifiedAt", r.title AS "riskTitle" FROM mock_actions a JOIN risk_items r ON r.id = a.risk_item_id WHERE a.analysis_run_id = $1 ORDER BY a.created_at DESC`, [runId]),
     ]);
-    return { ...run.rows[0], sources: sources.rows, branches: branches.rows, risks: risks.rows, disagreement: disagreement.rows[0] ?? null };
+    return {
+      ...run.rows[0], sources: sources.rows, branches: branches.rows, risks: risks.rows, disagreement: disagreement.rows[0] ?? null,
+      investigationPlan: planner.rows[0]?.plan ?? null, critic: critic.rows[0] ?? null, trace: trace.rows, actions: actions.rows,
+    };
   }
 
   async getRiskForActor(riskId: string, actor: Actor): Promise<StoredRisk> {
     const result = await this.pool.query<StoredRisk>(
-      `SELECT r.id, r.category, r.title, r.explanation, r.impact, r.likelihood, r.severity, r.mitigation, r.uncertainty,
+      `SELECT r.id, r.analysis_run_id AS "analysisRunId", r.category, r.title, r.explanation, r.impact, r.likelihood, r.severity, r.mitigation, r.uncertainty,
        COALESCE(array_agg(re.evidence_source_id) FILTER (WHERE re.evidence_source_id IS NOT NULL), '{}') AS "evidenceIds"
        FROM risk_items r
        JOIN analysis_runs a ON a.id = r.analysis_run_id
@@ -176,5 +213,39 @@ export class Repository {
       );
       await client.query(`UPDATE risk_items SET severity = $2, updated_at = NOW() WHERE id = $1`, [args.riskId, args.after]);
     });
+  }
+
+  async createMockAction(args: { riskId: string; actor: Actor; owner: string; dueDate: string; approvalNote: string }) {
+    const result = await this.pool.query<{ riskId: string; runId: string }>(
+      `SELECT r.id AS "riskId", r.analysis_run_id AS "runId" FROM risk_items r JOIN analysis_runs a ON a.id = r.analysis_run_id WHERE r.id = $1 AND a.organization_id = $2`,
+      [args.riskId, args.actor.org_id],
+    );
+    const risk = result.rows[0];
+    if (!risk) throw new AppError(404, "RISK_NOT_FOUND", "Risk not found");
+    const id = randomUUID();
+    await this.pool.query(
+      `INSERT INTO mock_actions (id, risk_item_id, analysis_run_id, organization_id, approved_by, owner, due_date, approval_note, status)
+       VALUES ($1,$2,$3,$4,$5,$6,$7::date,$8,'approved')`,
+      [id, risk.riskId, risk.runId, args.actor.org_id, args.actor.sub, args.owner, args.dueDate, args.approvalNote],
+    );
+    await this.recordTrace({ runId: risk.runId, skill: "Human Approval Gate", stage: "approve_action", status: "approved", detail: `Approved a mock mitigation action for owner ${args.owner}.`, metadata: { actionId: id, riskId: args.riskId, dueDate: args.dueDate } });
+    await this.recordTrace({ runId: risk.runId, skill: "Action Skill", stage: "create_action", status: "completed", detail: "Created a reversible mock action card; no external project system was changed.", metadata: { actionId: id, riskId: args.riskId } });
+    return { id, riskId: args.riskId, owner: args.owner, dueDate: args.dueDate, approvalNote: args.approvalNote, status: "approved" as const };
+  }
+
+  async verifyMockAction(args: { actionId: string; actor: Actor; outcome: "verified" | "failed"; note: string }) {
+    const action = await this.pool.query<{ id: string; runId: string }>(
+      `SELECT a.id, a.analysis_run_id AS "runId" FROM mock_actions a WHERE a.id = $1 AND a.organization_id = $2`,
+      [args.actionId, args.actor.org_id],
+    );
+    const stored = action.rows[0];
+    if (!stored) throw new AppError(404, "ACTION_NOT_FOUND", "Action not found");
+    const status = args.outcome === "verified" ? "verified" : "replan_required";
+    await this.pool.query(`UPDATE mock_actions SET status = $2, verification_note = $3, verified_at = NOW() WHERE id = $1`, [stored.id, status, args.note]);
+    await this.recordTrace({ runId: stored.runId, skill: "Verification Skill", stage: "verify_action", status: args.outcome === "verified" ? "verified" : "failed", detail: args.note, metadata: { actionId: stored.id } });
+    if (args.outcome === "failed") {
+      await this.recordTrace({ runId: stored.runId, skill: "PreMortem Main Agent", stage: "replan", status: "replan", detail: "Verification failed, so the Main Agent requested a new mitigation plan.", metadata: { actionId: stored.id } });
+    }
+    return { id: stored.id, status, outcome: args.outcome };
   }
 }

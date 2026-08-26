@@ -2,7 +2,9 @@ import type { Config } from "./config.js";
 import {
   ComparatorSchema,
   ControlAssessmentSchema,
+  CriticSchema,
   EvidenceSourceSchema,
+  InvestigationPlanSchema,
   PlanFactsSchema,
   ScenarioSchema,
   SynthesisSchema,
@@ -65,9 +67,36 @@ export class PreMortemEngine {
         maxCompletionTokens: 900,
       });
 
+      await this.repo.recordTrace({
+        runId: run.id,
+        skill: "PreMortem Main Agent",
+        stage: "normalize_plan",
+        status: "completed",
+        detail: "Extracted the project outcome, timeline, team, dependencies, technical changes, and missing controls.",
+      });
+
+      const investigationPlan = await this.groq.strictJson({
+        name: "investigation_plan",
+        schema: (await import("./contracts.js")).jsonSchemas.investigationPlan,
+        output: InvestigationPlanSchema,
+        system: SYSTEM.planner,
+        user: dataBlock("PLAN_FACTS", facts),
+        actorId: run.requestedBy,
+        maxCompletionTokens: 900,
+      });
+      await this.repo.saveInvestigationPlan(run.id, investigationPlan);
+      await this.repo.recordTrace({
+        runId: run.id,
+        skill: "Investigation Planner",
+        stage: "select_skills",
+        status: "completed",
+        detail: investigationPlan.summary,
+        metadata: { angles: investigationPlan.angles, queries: investigationPlan.researchQueries },
+      });
+
       const [evidenceA, evidenceB] = await Promise.all([
-        retrieveEvidence({ client: this.groq, facts, branch: "A", actorId: run.requestedBy }),
-        retrieveEvidence({ client: this.groq, facts, branch: "B", actorId: run.requestedBy }),
+        retrieveEvidence({ client: this.groq, facts, branch: "A", actorId: run.requestedBy, plannedQuery: investigationPlan.researchQueries.A }),
+        retrieveEvidence({ client: this.groq, facts, branch: "B", actorId: run.requestedBy, plannedQuery: investigationPlan.researchQueries.B }),
       ]);
       if (evidenceA.length < 2 || evidenceB.length < 2) {
         throw new AppError(502, "EVIDENCE_INSUFFICIENT", "Enough verifiable evidence could not be retrieved for independent analysis");
@@ -75,6 +104,14 @@ export class PreMortemEngine {
       const sources = deDuplicateAcrossBranches(evidenceA, evidenceB);
       for (const source of sources.stored) EvidenceSourceSchema.parse(source);
       await this.repo.saveEvidence(run.id, sources.stored);
+      await this.repo.recordTrace({
+        runId: run.id,
+        skill: "Research Skill",
+        stage: "retrieve_and_check_sources",
+        status: "completed",
+        detail: `Retrieved and retained ${sources.stored.length} HTTPS evidence records across two independent branches.`,
+        metadata: { branchA: evidenceA.length, branchB: evidenceB.length },
+      });
 
       const [scenarioA, scenarioB] = await Promise.all([
         this.createScenario(run.plan, facts, sources.left, "A", run.requestedBy),
@@ -91,7 +128,48 @@ export class PreMortemEngine {
       });
       const comparison = classifyComparison(scenarioA, scenarioB, semantic);
 
+      await this.repo.recordTrace({
+        runId: run.id,
+        skill: "Independent Scenario Agents",
+        stage: "form_failure_hypotheses",
+        status: "completed",
+        detail: "Produced two independent, evidence-limited failure narratives before synthesis.",
+      });
+      await this.repo.recordTrace({
+        runId: run.id,
+        skill: "Comparator",
+        stage: "compare_branches",
+        status: comparison.displayStatus === "meaningful_disagreement" ? "attention" : "completed",
+        detail: comparison.explanation,
+        metadata: { relation: comparison.semanticRelation, evidenceOverlap: comparison.evidenceOverlap },
+      });
+
       const allowedEvidence = sources.stored.filter((source) => source.status === "retrieved" && source.sourceTier < 4);
+      const critic = await this.groq.strictJson({
+        name: "evidence_critic",
+        schema: (await import("./contracts.js")).jsonSchemas.critic,
+        output: CriticSchema,
+        system: SYSTEM.critic,
+        user: [
+          dataBlock("PLAN_FACTS", facts),
+          dataBlock("INVESTIGATION_PLAN", investigationPlan),
+          dataBlock("SCENARIO_A", scenarioA),
+          dataBlock("SCENARIO_B", scenarioB),
+          dataBlock("COMPARISON", comparison),
+          dataBlock("ALLOWED_EVIDENCE", evidenceCards(allowedEvidence)),
+        ].join("\n"),
+        actorId: run.requestedBy,
+        maxCompletionTokens: 700,
+      });
+      await this.repo.saveCritic(run.id, critic);
+      await this.repo.recordTrace({
+        runId: run.id,
+        skill: "Evidence Critic",
+        stage: "challenge_evidence",
+        status: critic.evidenceGaps.length ? "attention" : "completed",
+        detail: critic.finding,
+        metadata: { evidenceGaps: critic.evidenceGaps, nextCheck: critic.nextCheck },
+      });
       const synthesis = await this.groq.strictJson({
         name: "risk_synthesis",
         schema: (await import("./contracts.js")).jsonSchemas.synthesis,
@@ -109,6 +187,13 @@ export class PreMortemEngine {
       });
       for (const risk of synthesis.risks) assertEvidenceReferences(risk.evidenceIds, allowedEvidence);
       await this.repo.completeRun({ runId: run.id, facts, scenarioA, scenarioB, comparison, synthesis });
+      await this.repo.recordTrace({
+        runId: run.id,
+        skill: "Decision Skill",
+        stage: "rank_risks",
+        status: "completed",
+        detail: `Created ${synthesis.risks.length} evidence-linked risks and ranked them for human review.`,
+      });
     } catch (error) {
       await this.repo.failRun(run.id, error instanceof AppError ? error.code : "ANALYSIS_FAILED");
       throw error;
@@ -148,6 +233,14 @@ export class PreMortemEngine {
     await this.repo.saveMitigation({
       riskId: risk.id, actor: args.actor, answer: args.answer, evidence: assessment.evidence,
       rationale: assessment.rationale, gaps: assessment.gaps, before: scoring.before, after: scoring.after,
+    });
+    await this.repo.recordTrace({
+      runId: risk.analysisRunId,
+      skill: "Human Challenge",
+      stage: "assess_mitigation",
+      status: assessment.evidence === "verified" ? "completed" : "attention",
+      detail: assessment.rationale,
+      metadata: { evidence: assessment.evidence, before: scoring.before, after: scoring.after, gaps: assessment.gaps },
     });
     return { assessment, ...scoring };
   }

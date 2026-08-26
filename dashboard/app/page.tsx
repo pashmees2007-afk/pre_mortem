@@ -1,16 +1,18 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { AlertTriangle, ArrowRight, BookOpenText, ChevronRight, CircleCheck, FileSearch, FlaskConical, Layers3, LoaderCircle, Network, ShieldCheck, Sparkles, Waypoints } from "lucide-react";
-import { createAnalysis, getAnalysis, submitMitigation } from "@/lib/api";
+import { AlertTriangle, ArrowRight, BadgeCheck, BookOpenText, CalendarDays, ChevronRight, CircleCheck, CircleDashed, ClipboardCheck, FileSearch, FlaskConical, Layers3, LoaderCircle, Network, RotateCcw, ShieldCheck, Sparkles, UserRoundCheck, Waypoints } from "lucide-react";
+import { approveMockAction, createAnalysis, getAnalysis, submitMitigation, verifyMockAction } from "@/lib/api";
 import { demoAnalysis, samplePlan } from "@/lib/demo";
 import { matrixStatus } from "@/lib/matrix";
-import type { Analysis, Risk, Source } from "@/lib/contracts";
+import type { AgentTraceEvent, Analysis, MockAction, Risk, Source } from "@/lib/contracts";
 
 const nav = [
   [Layers3, "Analysis workspace", "#workspace"],
+  [Waypoints, "Agent activity", "#agent-flow"],
   [Network, "Disagreement matrix", "#matrix"],
   [AlertTriangle, "Risk register", "#risks"],
+  [ClipboardCheck, "Approval & action", "#actions"],
   [BookOpenText, "Evidence ledger", "#sources"],
 ] as const;
 
@@ -29,6 +31,12 @@ function sourceFor(risk: Risk, sources: Source[]) {
 
 function delay(ms: number) { return new Promise((resolve) => setTimeout(resolve, ms)); }
 
+function traceTone(status: AgentTraceEvent["status"]) {
+  if (status === "attention" || status === "failed" || status === "replan") return "signal";
+  if (status === "approved") return "gold";
+  return "teal";
+}
+
 export default function DashboardPage() {
   const [projectId, setProjectId] = useState("00000000-0000-4000-8000-000000000000");
   const [plan, setPlan] = useState(samplePlan);
@@ -38,6 +46,12 @@ export default function DashboardPage() {
   const [mitigationAnswer, setMitigationAnswer] = useState("");
   const [running, setRunning] = useState(false);
   const [submittingMitigation, setSubmittingMitigation] = useState(false);
+  const [actionOwner, setActionOwner] = useState("Project owner");
+  const [actionDueDate, setActionDueDate] = useState("2026-09-02");
+  const [approvalNote, setApprovalNote] = useState("I approve this safe, reversible mock mitigation action.");
+  const [verificationNote, setVerificationNote] = useState("");
+  const [savingAction, setSavingAction] = useState(false);
+  const [verifyingAction, setVerifyingAction] = useState(false);
   const [feedback, setFeedback] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -103,6 +117,49 @@ export default function DashboardPage() {
     }
   }
 
+  async function approveAction() {
+    if (!selectedRisk || actionOwner.trim().length < 2 || approvalNote.trim().length < 8) return;
+    setSavingAction(true);
+    setError(null);
+    try {
+      if (isDemo) {
+        const action: MockAction = { id: crypto.randomUUID(), riskId: selectedRisk.id, riskTitle: selectedRisk.title, owner: actionOwner.trim(), dueDate: actionDueDate, approvalNote: approvalNote.trim(), status: "approved", verificationNote: null, createdAt: new Date().toISOString(), verifiedAt: null };
+        setAnalysis((current) => ({ ...current, actions: [action, ...current.actions], trace: [...current.trace, { skill: "Human Approval Gate", stage: "approve_action", status: "approved", detail: `Approved a mock mitigation action for ${action.owner}.`, metadata: { actionId: action.id }, createdAt: new Date().toISOString() }, { skill: "Action Skill", stage: "create_action", status: "completed", detail: "Created a reversible mock action card; no external project system was changed.", metadata: { actionId: action.id }, createdAt: new Date().toISOString() }] }));
+        setFeedback("Mock action approved. It is recorded only inside this example dossier; no external project tool was changed.");
+      } else {
+        await approveMockAction(selectedRisk.id, { owner: actionOwner.trim(), dueDate: actionDueDate, approvalNote: approvalNote.trim() });
+        setAnalysis(await getAnalysis(analysis.id));
+        setFeedback("Action approved and recorded. The project system is still unchanged because this MVP uses a mock action board.");
+      }
+      setVerificationNote("");
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "The action could not be approved.");
+    } finally {
+      setSavingAction(false);
+    }
+  }
+
+  async function verifyAction(action: MockAction, outcome: "verified" | "failed") {
+    if (verificationNote.trim().length < 8) return;
+    setVerifyingAction(true);
+    setError(null);
+    try {
+      if (isDemo) {
+        setAnalysis((current) => ({ ...current, actions: current.actions.map((item) => item.id === action.id ? { ...item, status: outcome === "verified" ? "verified" : "replan_required", verificationNote: verificationNote.trim(), verifiedAt: new Date().toISOString() } : item), trace: [...current.trace, { skill: "Verification Skill", stage: "verify_action", status: outcome === "verified" ? "verified" : "failed", detail: verificationNote.trim(), metadata: { actionId: action.id }, createdAt: new Date().toISOString() }, ...(outcome === "failed" ? [{ skill: "PreMortem Main Agent", stage: "replan", status: "replan" as const, detail: "Verification failed, so the Main Agent requested a new mitigation plan.", metadata: { actionId: action.id }, createdAt: new Date().toISOString() }] : [])] }));
+        setFeedback(outcome === "verified" ? "Mock action verified. The case can move forward." : "Verification failed. The Main Agent has requested a replan.");
+      } else {
+        await verifyMockAction(action.id, { outcome, note: verificationNote.trim() });
+        setAnalysis(await getAnalysis(analysis.id));
+        setFeedback(outcome === "verified" ? "Action verified." : "Verification failed and a replan was recorded.");
+      }
+      setVerificationNote("");
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "The verification result could not be saved.");
+    } finally {
+      setVerifyingAction(false);
+    }
+  }
+
   return (
     <div className="shell">
       <aside className="side">
@@ -142,6 +199,16 @@ export default function DashboardPage() {
         {feedback && <div className="empty" role="status" style={{ marginTop: 16, padding: 16, textAlign: "left", borderStyle: "solid", borderColor: "#b5d5ca" }}>{feedback}</div>}
 
         {analysis.status !== "succeeded" ? <div className="empty" style={{ marginTop: 36 }}>{analysis.status === "failed" ? "This run did not complete. The backend recorded a failure state rather than fabricating a result." : "The secure backend is collecting and comparing evidence. This workspace will update when the run completes."}</div> : <>
+          <section id="agent-flow" className="section" aria-labelledby="agent-flow-title">
+            <div className="section-head"><div><span className="eyebrow">Inspectable orchestration</span><h2 id="agent-flow-title" className="section-title">Agent activity trace</h2></div><p className="section-caption">The agent starts with a project goal, chooses risk angles, researches evidence, compares branches, asks for approval, and verifies action outcomes.</p></div>
+            <div className="agent-flow-layout">
+              <div className="card trace-card"><div className="trace-heading"><div><span className="mono">Observed sequence</span><strong>Every completed or attention-needed agent step</strong></div><span className="pill teal">{analysis.trace.length} events</span></div><div className="trace-list">{analysis.trace.map((event, index) => <TraceItem event={event} index={index} key={`${event.createdAt}-${event.stage}-${index}`} />)}</div></div>
+              <aside className="agent-side-stack">
+                <article className="card planner-card"><span className="eyebrow">01 · Investigation planner</span><h3>{analysis.investigationPlan?.summary ?? "The Main Agent will select the right skills once planning is complete."}</h3>{analysis.investigationPlan && <><div className="planner-angles">{analysis.investigationPlan.angles.map((angle) => <span key={`${angle.branch}-${angle.category}`}><b>Branch {angle.branch}</b>{angle.category.replaceAll("_", " ")}</span>)}</div><div className="query-pair"><p><strong>Query A</strong>{analysis.investigationPlan.researchQueries.A}</p><p><strong>Query B</strong>{analysis.investigationPlan.researchQueries.B}</p></div></>}</article>
+                <article className="card critic-card"><span className="eyebrow">05 · Evidence critic</span><h3>{analysis.critic?.finding ?? "The Critic will challenge the evidence after both branches finish."}</h3>{analysis.critic && <><div className="critic-gap"><AlertTriangle size={14} /><span>{analysis.critic.evidenceGaps[0] ?? "No material evidence gap recorded."}</span></div><p className="next-check"><strong>Next check</strong>{analysis.critic.nextCheck}</p></>}</article>
+              </aside>
+            </div>
+          </section>
           <section id="matrix" className="section" aria-labelledby="matrix-title">
             <div className="section-head"><div><span className="eyebrow">Independent branches</span><h2 id="matrix-title" className="section-title">Disagreement matrix</h2></div><p className="section-caption">The matrix compares branch-specific primary causes, evidence overlap, and the reason the system did—or did not—flag disagreement.</p></div>
             <div className="card matrix">
@@ -160,6 +227,14 @@ export default function DashboardPage() {
             <div className="risk-layout">
               <div className="risk-list">{analysis.risks.map((risk) => <RiskItem key={risk.id} risk={risk} selected={risk.id === selectedRisk?.id} onSelect={() => setSelectedRiskId(risk.id)} sourceCount={risk.evidenceIds.length} />)}</div>
               {selectedRisk && <RiskDetail risk={selectedRisk} sources={sourceFor(selectedRisk, analysis.sources)} answer={mitigationAnswer} onAnswer={setMitigationAnswer} onSubmit={assessMitigation} loading={submittingMitigation} />}
+            </div>
+          </section>
+
+          <section id="actions" className="section" aria-labelledby="actions-title">
+            <div className="section-head"><div><span className="eyebrow">Human-in-the-loop control</span><h2 id="actions-title" className="section-title">Approval, action, and verification</h2></div><p className="section-caption">The agent cannot close a risk by itself. A person approves a safe mock action, then verifies the result or sends the case back for replanning.</p></div>
+            <div className="action-layout">
+              <article className="card approval-card"><div className="approval-head"><span className="seal"><UserRoundCheck size={15} /></span><div><span className="eyebrow">Human approval gate</span><h3>{selectedRisk?.title ?? "Select a risk"}</h3></div></div><p>Approve only a reversible mock action. This MVP records the decision inside Pre-Mortem and does not change Jira, GitHub, or any external project tool.</p><div className="control-grid"><label className="label">Action owner<input className="textarea control-input" value={actionOwner} onChange={(event) => setActionOwner(event.target.value)} /></label><label className="label">Due date<input type="date" className="textarea control-input" value={actionDueDate} onChange={(event) => setActionDueDate(event.target.value)} /></label></div><label className="label">Approval note<textarea className="textarea control-note" value={approvalNote} onChange={(event) => setApprovalNote(event.target.value)} /></label><button className="button primary" onClick={approveAction} disabled={savingAction || !selectedRisk || approvalNote.trim().length < 8}>{savingAction ? <><LoaderCircle size={14} className="spin" /> Saving approval</> : <><BadgeCheck size={14} /> Approve mock action</>}</button></article>
+              <article className="card action-board"><div className="action-board-head"><div><span className="eyebrow">Action board</span><h3>Approved mitigation cards</h3></div><span className="pill">{analysis.actions.length} recorded</span></div>{analysis.actions.length === 0 ? <div className="empty action-empty"><CircleDashed size={21} />No approved action yet. Assess a mitigation, then approve a safe mock task.</div> : <div className="action-list">{analysis.actions.map((action) => <ActionCard key={action.id} action={action} verificationNote={verificationNote} onNote={setVerificationNote} onVerify={verifyAction} loading={verifyingAction} />)}</div>}</article>
             </div>
           </section>
 
@@ -185,6 +260,16 @@ function RiskItem({ risk, selected, onSelect, sourceCount }: { risk: Risk; selec
 
 function RiskDetail({ risk, sources, answer, onAnswer, onSubmit, loading }: { risk: Risk; sources: Source[]; answer: string; onAnswer: (value: string) => void; onSubmit: () => void; loading: boolean }) {
   return <aside className="card detail"><span className="eyebrow">Selected risk</span><h3>{risk.title}</h3><p>{risk.explanation}</p><div className="fact"><span>Recommended mitigation</span>{risk.mitigation}</div><div className="fact"><span>Severity rubric</span>Impact {risk.impact}/5 × likelihood {risk.likelihood}/5 → <strong>{risk.severity}/5</strong></div><div className="fact"><span>Uncertainty</span>{risk.uncertainty}</div><div className="fact"><span>Supporting evidence</span>{sources.map((source) => <a className="source-link" target="_blank" rel="noreferrer" href={source.url} key={source.id}><ChevronRight size={13} /><span>{source.publisher ?? source.hostname}<br /><strong>{source.title}</strong></span></a>)}</div><div className="mitigation"><span className="mono">Mitigation evidence</span><p style={{ margin: "6px 0 9px" }}>What concrete control, owner, test, rollback, or monitoring proof changes this risk?</p><textarea className="textarea" value={answer} onChange={(event) => onAnswer(event.target.value)} placeholder="e.g. Maria owns the gateway canary; rollback was exercised in staging on 26 Aug; alert threshold is documented…" /><button className="button primary" style={{ marginTop: 9 }} onClick={onSubmit} disabled={loading || answer.trim().length < 8}>{loading ? "Assessing control…" : "Assess mitigation"}</button><div className="score-change"><span className="score-badge">{risk.severity}/5</span><ArrowRight size={12} /><span>Re-score is retained with a rationale and can be reversed.</span></div></div></aside>;
+}
+
+function TraceItem({ event, index }: { event: AgentTraceEvent; index: number }) {
+  const Icon = event.status === "approved" ? UserRoundCheck : event.status === "verified" ? CircleCheck : event.status === "replan" ? RotateCcw : event.status === "attention" || event.status === "failed" ? AlertTriangle : Waypoints;
+  return <div className={`trace-item ${traceTone(event.status)}`}><span className="trace-step">{String(index + 1).padStart(2, "0")}</span><span className="trace-icon"><Icon size={15} /></span><div><strong>{event.skill}</strong><span>{event.stage.replaceAll("_", " ")}</span><p>{event.detail}</p></div></div>;
+}
+
+function ActionCard({ action, verificationNote, onNote, onVerify, loading }: { action: MockAction; verificationNote: string; onNote: (value: string) => void; onVerify: (action: MockAction, outcome: "verified" | "failed") => void; loading: boolean }) {
+  const closed = action.status === "verified" || action.status === "replan_required";
+  return <article className={`action-item ${action.status}`}><div className="action-item-top"><div><span className="eyebrow">{action.status.replaceAll("_", " ")}</span><h4>{action.riskTitle ?? "Approved risk mitigation"}</h4></div><span className={`pill ${action.status === "replan_required" ? "high" : action.status === "verified" ? "teal" : ""}`}>{action.status.replaceAll("_", " ")}</span></div><p><strong>Owner:</strong> {action.owner} <span>·</span> <strong>Due:</strong> <CalendarDays size={12} /> {action.dueDate}</p><div className="approval-note"><strong>Approval record</strong>{action.approvalNote}</div>{closed ? <div className="verification-result"><CircleCheck size={15} /><span>{action.verificationNote ?? "No verification note recorded."}</span></div> : <div className="verify-control"><label className="label">Verification note<textarea className="textarea control-note" value={verificationNote} onChange={(event) => onNote(event.target.value)} placeholder="What happened when you checked the mitigation?" /></label><div className="verify-buttons"><button className="button quiet" disabled={loading || verificationNote.trim().length < 8} onClick={() => onVerify(action, "verified")}><CircleCheck size={14} /> Mark verified</button><button className="button signal-button" disabled={loading || verificationNote.trim().length < 8} onClick={() => onVerify(action, "failed")}><RotateCcw size={14} /> Request replan</button></div></div>}</article>;
 }
 
 function SourceCard({ source }: { source: Source }) {
