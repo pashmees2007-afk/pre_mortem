@@ -13,8 +13,8 @@ export function createAnalysisQueue(redis: QueueRedis) {
     async enqueue(analysisRunId: string) {
       await queue.add("run-analysis", { analysisRunId }, {
         jobId: analysisRunId,
-        attempts: 3,
-        backoff: { type: "exponential", delay: 2_000 },
+        attempts: 2,
+        backoff: { type: "exponential", delay: 10_000 },
         removeOnComplete: 200,
         removeOnFail: 500,
       });
@@ -27,7 +27,7 @@ export function createAnalysisWorker(redis: QueueRedis, engine: PreMortemEngine)
   return new Worker(QUEUE, async (job: Job) => {
     const { analysisRunId } = JobData.parse(job.data);
     await engine.run(analysisRunId);
-  }, { connection: redis.duplicate() as any, concurrency: 3, lockDuration: 90_000 });
+  }, { connection: redis.duplicate() as any, concurrency: 1, lockDuration: 90_000 });
 }
 
 export type AnalysisQueue = ReturnType<typeof createAnalysisQueue>;

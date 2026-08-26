@@ -13,3 +13,12 @@
 - [x] Add focused tests and update package documentation.
 - [x] Run type checks, tests, and production builds for backend and dashboard.
 - [x] Commit the approved implementation to the repository without exposing credentials.
+
+## Local Runtime Checklist
+
+- [x] Inspect required environment variables and local service prerequisites.
+- [x] Start or configure PostgreSQL and Redis if available.
+- [x] Apply the backend migrations in order.
+- [x] Start the secure API and worker.
+- [x] Start the dashboard and confirm the example dossier loads.
+- [x] Identify any missing user-provided secret or local dependency.

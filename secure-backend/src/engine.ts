@@ -64,7 +64,7 @@ export class PreMortemEngine {
         system: SYSTEM.normalize,
         user: dataBlock("PLAN_DATA", run.plan),
         actorId: run.requestedBy,
-        maxCompletionTokens: 900,
+        maxCompletionTokens: 400,
       });
 
       await this.repo.recordTrace({
@@ -82,7 +82,7 @@ export class PreMortemEngine {
         system: SYSTEM.planner,
         user: dataBlock("PLAN_FACTS", facts),
         actorId: run.requestedBy,
-        maxCompletionTokens: 900,
+        maxCompletionTokens: 400,
       });
       await this.repo.saveInvestigationPlan(run.id, investigationPlan);
       await this.repo.recordTrace({
@@ -124,7 +124,7 @@ export class PreMortemEngine {
         system: SYSTEM.comparator,
         user: [dataBlock("SCENARIO_A", scenarioA), dataBlock("SCENARIO_B", scenarioB)].join("\n"),
         actorId: run.requestedBy,
-        maxCompletionTokens: 600,
+        maxCompletionTokens: 300,
       });
       const comparison = classifyComparison(scenarioA, scenarioB, semantic);
 
@@ -159,7 +159,7 @@ export class PreMortemEngine {
           dataBlock("ALLOWED_EVIDENCE", evidenceCards(allowedEvidence)),
         ].join("\n"),
         actorId: run.requestedBy,
-        maxCompletionTokens: 700,
+        maxCompletionTokens: 350,
       });
       await this.repo.saveCritic(run.id, critic);
       await this.repo.recordTrace({
@@ -183,7 +183,7 @@ export class PreMortemEngine {
           dataBlock("ALLOWED_EVIDENCE", evidenceCards(allowedEvidence)),
         ].join("\n"),
         actorId: run.requestedBy,
-        maxCompletionTokens: 1_400,
+        maxCompletionTokens: 700,
       });
       for (const risk of synthesis.risks) assertEvidenceReferences(risk.evidenceIds, allowedEvidence);
       await this.repo.completeRun({ runId: run.id, facts, scenarioA, scenarioB, comparison, synthesis });
@@ -208,7 +208,7 @@ export class PreMortemEngine {
       system: SYSTEM.scenario(branch),
       user: [dataBlock("PLAN_DATA", plan), dataBlock("PLAN_FACTS", facts), dataBlock("EVIDENCE_CARDS", evidenceCards(evidence))].join("\n"),
       actorId,
-      maxCompletionTokens: 1_300,
+      maxCompletionTokens: 650,
     });
     for (const claim of scenario.claims) assertEvidenceReferences(claim.evidenceIds, evidence);
     return scenario;
@@ -227,7 +227,7 @@ export class PreMortemEngine {
         dataBlock("CONTROL_CRITERIA", ["named owner", "test evidence", "rollback or fallback", "monitoring signal"]),
       ].join("\n"),
       actorId: args.actor.sub,
-      maxCompletionTokens: 700,
+      maxCompletionTokens: 350,
     });
     const scoring = rescoreSeverity(risk.severity, assessment.evidence);
     await this.repo.saveMitigation({

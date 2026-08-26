@@ -15,7 +15,8 @@ async function forward(request: NextRequest, context: { params: Promise<{ path: 
     return NextResponse.json({ error: { code: "NOT_FOUND", message: "Route not found" } }, { status: 404 });
   }
   const base = process.env.PREMORTEM_API_URL;
-  if (!base?.startsWith("https://")) {
+  const localDevelopmentApi = process.env.NODE_ENV !== "production" && /^http:\/\/(localhost|127\.0\.0\.1):\d+$/.test(base ?? "");
+  if (!base || (!base.startsWith("https://") && !localDevelopmentApi)) {
     return NextResponse.json({ error: { code: "BACKEND_NOT_CONFIGURED", message: "Secure backend is not configured" } }, { status: 503 });
   }
   const accessCookie = process.env.PREMORTEM_ACCESS_COOKIE ?? "pm_access_token";

@@ -31,20 +31,32 @@ export class GroqClient {
   }
 
   async strictJson<T extends z.ZodType>(args: { model?: string; name: string; schema: Record<string, unknown>; output: T; system: string; user: string; actorId: string; maxCompletionTokens?: number }) {
-    const raw = await this.request({
+    const request = {
       model: args.model ?? this.config.GROQ_STRUCTURED_MODEL,
-      temperature: 0.2,
+      temperature: 0,
       max_completion_tokens: args.maxCompletionTokens ?? 1_400,
       user: args.actorId,
       messages: [{ role: "system", content: args.system }, { role: "user", content: args.user }] satisfies GroqMessage[],
+    };
+    let raw: GroqResponse;
+    try {
+      raw = await this.request({
+        ...request,
       response_format: { type: "json_schema", json_schema: { name: args.name, strict: true, schema: args.schema } },
-    });
+      });
+    } catch (error) {
+      if (!(error instanceof UpstreamError) || !error.message.includes("Failed to validate JSON")) throw error;
+      raw = await this.request({ ...request, response_format: { type: "json_object" } });
+    }
     const text = raw.choices?.[0]?.message?.content;
     if (!text) throw new UpstreamError("The analysis provider returned an empty response");
     let json: unknown;
     try { json = JSON.parse(text); } catch { throw new UpstreamError("The analysis provider returned invalid JSON"); }
     const parsed = args.output.safeParse(json);
-    if (!parsed.success) throw new UpstreamError("The analysis provider returned an invalid result shape");
+    if (!parsed.success) {
+      const fields = parsed.error.issues.map((issue) => issue.path.join(".") || "root").slice(0, 5).join(", ");
+      throw new UpstreamError(`${args.name}: the analysis provider returned an invalid result shape for ${fields}`);
+    }
     return parsed.data;
   }
 
@@ -54,7 +66,6 @@ export class GroqClient {
       temperature: 0,
       max_completion_tokens: 450,
       user: args.actorId,
-      citation_options: "enabled",
       search_settings: args.includeDomains?.length ? { include_domains: args.includeDomains } : undefined,
       messages: [{ role: "user", content: `Find software-engineering failure precedents for this bounded research query. Return concise source-grounded findings. QUERY: ${args.query}` }] satisfies GroqMessage[],
     });
