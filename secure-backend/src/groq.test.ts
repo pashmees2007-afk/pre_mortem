@@ -63,6 +63,15 @@ describe("GroqClient structured reasoning", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
+  it("retries one Qwen request after the provider's token-rate retry hint", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: { message: "Rate limit reached for model. Please try again in 0ms." } }), { status: 429 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(validResponse), { status: 200 }));
+    await expect(new GroqClient(config).strictJson({ name: "plan_facts", schema, output: Output, system: "system", user: "plan", actorId: "actor" }))
+      .resolves.toEqual({ outcome: "Ship integration", dependencies: ["gateway"] });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
   it("uses JSON-object mode first for a compact comparison stage", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ semanticRelation: "complements", explanation: "The branches expose separate release risks." }) } }] }), { status: 200 }));
     await expect(new GroqClient(config).strictJson({ name: "scenario_comparison", schema: comparisonSchema, output: ComparisonOutput, system: "system", user: "scenarios", actorId: "actor", responseMode: "object" }))

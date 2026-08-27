@@ -146,5 +146,7 @@
 - [x] Capture the malformed comparator, critic, and decision output patterns from completed live runs.
 - [x] Tighten their schemas and prompts while preserving evidence-only inputs and transparent failures.
 - [x] Add focused tests for valid model output and malformed-output recovery. The complete backend suite now has 29 passing tests.
-- [ ] Run a fresh comparative pipeline and record which, if any, stages still require fallback. This requires a local non-production Groq credential; none is available in the current session.
+- [x] Run a fresh comparative pipeline and record which, if any, stages still require fallback. The live fintech run completed with 13 sources; only the risk-synthesis stage required its existing transparent fallback.
+- [x] Capture the updated live comparator and critic trace metadata, confirming their `fallback` flags are false.
+- [x] Pace the live Qwen stages and cap their evidence cards so the on-demand 8,000 TPM limit does not interrupt scenario generation.
 - [ ] Commit and push the validated reliability improvement.

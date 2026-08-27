@@ -24,12 +24,14 @@ import { type Repository } from "./repository.js";
 import { classifyComparison, rescoreSeverity } from "./scoring.js";
 
 function evidenceCards(sources: EvidenceSource[]) {
-  return sources.filter((source) => source.status === "retrieved" && source.sourceTier < 4).map((source) => ({
+  return sources.filter((source) => source.status === "retrieved" && source.sourceTier < 4)
+    .sort((left, right) => left.sourceTier - right.sourceTier)
+    .slice(0, 4)
+    .map((source) => ({
     id: source.id,
     title: source.title,
     publisher: source.publisher,
-    url: source.url,
-    snippet: source.snippet,
+    snippet: source.snippet.slice(0, 360),
     tier: source.sourceTier,
   }));
 }
@@ -245,10 +247,11 @@ export class PreMortemEngine {
         metadata: { branchA: evidenceA.length, branchB: evidenceB.length },
       });
 
-      const [scenarioA, scenarioB] = await Promise.all([
-        this.createScenario(run.plan, facts, sources.left, "A", run.requestedBy),
-        this.createScenario(run.plan, facts, sources.right, "B", run.requestedBy),
-      ]);
+      // Qwen's on-demand tier shares an 8K TPM budget. Scenario prompts are
+      // deliberately serialized; the branches stay independent because they
+      // receive separate evidence and do not exchange outputs.
+      const scenarioA = await this.createScenario(run.plan, facts, sources.left, "A", run.requestedBy);
+      const scenarioB = await this.createScenario(run.plan, facts, sources.right, "B", run.requestedBy);
       let semantic: Pick<Comparison, "semanticRelation" | "explanation">;
       let usedComparatorFallback = false;
       try {
@@ -351,6 +354,7 @@ export class PreMortemEngine {
         stage: "rank_risks",
         status: usedSynthesisFallback ? "attention" : "completed",
         detail: `${usedSynthesisFallback ? "Provider synthesis output was invalid; a transparent evidence-preserving synthesis was used. " : ""}Created ${synthesis.risks.length} evidence-linked risks and ranked them for human review.`,
+        metadata: { fallback: usedSynthesisFallback },
       });
     } catch (error) {
       await this.repo.failRun(run.id, error instanceof AppError ? error.code : "ANALYSIS_FAILED");
@@ -366,7 +370,7 @@ export class PreMortemEngine {
       system: SYSTEM.scenario(branch),
       user: [dataBlock("PLAN_DATA", plan), dataBlock("PLAN_FACTS", facts), dataBlock("EVIDENCE_CARDS", evidenceCards(evidence))].join("\n"),
       actorId,
-      maxCompletionTokens: 900,
+      maxCompletionTokens: 700,
     });
     for (const claim of scenario.claims) assertEvidenceReferences(claim.evidenceIds, evidence);
     return scenario;

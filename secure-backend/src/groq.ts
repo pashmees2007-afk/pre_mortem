@@ -41,7 +41,34 @@ function parseJsonObject(text: string): unknown {
 }
 
 export class GroqClient {
+  private structuredRequestTail: Promise<void> = Promise.resolve();
+
   constructor(private readonly config: Config) {}
+
+  private async structuredRequest(body: Record<string, unknown>): Promise<GroqResponse> {
+    let release: (() => void) | undefined;
+    const previous = this.structuredRequestTail;
+    this.structuredRequestTail = new Promise<void>((resolve) => { release = resolve; });
+    await previous;
+    try {
+      return await this.requestWithOneRateRetry(body);
+    } finally {
+      release?.();
+    }
+  }
+
+  private async requestWithOneRateRetry(body: Record<string, unknown>): Promise<GroqResponse> {
+    try {
+      return await this.request(body);
+    } catch (error) {
+      const hint = error instanceof UpstreamError ? error.message.match(/try again in (\d+)ms/i) : null;
+      if (!hint) throw error;
+      const hintedDelay = Number.parseInt(hint[1] ?? "0", 10);
+      const waitMs = this.config.NODE_ENV === "test" ? 0 : Math.max(1_000, hintedDelay + 250);
+      await new Promise<void>((resolve) => setTimeout(resolve, waitMs));
+      return this.request(body);
+    }
+  }
 
   private async request(body: Record<string, unknown>): Promise<GroqResponse> {
     let response: Response;
@@ -91,10 +118,10 @@ export class GroqClient {
       // Compact stages have only a few keys but carry substantial evidence as
       // input. JSON-object mode avoids native-schema rejection from Qwen while
       // retaining local Zod validation and the same recovery ladder.
-      raw = await this.request({ ...request, response_format: { type: "json_object" } });
+      raw = await this.structuredRequest({ ...request, response_format: { type: "json_object" } });
     } else {
       try {
-        raw = await this.request({
+        raw = await this.structuredRequest({
           ...request,
           response_format: { type: "json_schema", json_schema: { name: args.name, strict: true, schema: args.schema } },
         });
@@ -102,7 +129,7 @@ export class GroqClient {
         const schemaRejected = error instanceof UpstreamError
           && (error.message.includes("Failed to validate JSON") || error.message.includes("Generated JSON does not match the expected schema"));
         if (!schemaRejected) throw error;
-        raw = await this.request({ ...request, response_format: { type: "json_object" } });
+        raw = await this.structuredRequest({ ...request, response_format: { type: "json_object" } });
       }
     }
     const text = raw.choices?.[0]?.message?.content;
@@ -119,7 +146,7 @@ export class GroqClient {
     // Regenerate once with local validation feedback, then make one bounded
     // data-only repair pass. Zod remains the final authority throughout.
     // Zod remains the final authority throughout the recovery ladder.
-    const regenerated = await this.request({
+    const regenerated = await this.structuredRequest({
       model: request.model,
       temperature: 0,
       max_completion_tokens: Math.min(Math.max(args.maxCompletionTokens ?? 600, 450), 1_100),
@@ -142,7 +169,7 @@ export class GroqClient {
         fields = "root: regenerated response was not a complete JSON object";
       }
     }
-    const repaired = await this.request({
+    const repaired = await this.structuredRequest({
       model: request.model,
       temperature: 0,
       max_completion_tokens: Math.min(Math.max(args.maxCompletionTokens ?? 600, 450), 1_100),
