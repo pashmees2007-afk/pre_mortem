@@ -7,10 +7,8 @@ const EnvSchema = z.object({
   REDIS_URL: z.string().url(),
   GROQ_API_KEY: z.string().min(20),
   GROQ_RETRIEVAL_MODEL: z.string().min(3).default("groq/compound-mini"),
-  // Retained for backward-compatible tooling; typed reasoning now uses Gemini.
-  GROQ_STRUCTURED_MODEL: z.string().min(3).default("openai/gpt-oss-20b"),
-  GEMINI_API_KEY: z.string().min(20),
-  GEMINI_STRUCTURED_MODEL: z.string().min(3).default("gemini-3.6-flash"),
+  // Qwen performs all schema-constrained reasoning; Compound Mini stays retrieval-only.
+  GROQ_STRUCTURED_MODEL: z.string().min(3).default("qwen/qwen3.8-27b"),
   JWT_SECRET: z.string().min(32),
   JWT_ISSUER: z.string().min(1),
   JWT_AUDIENCE: z.string().min(1),

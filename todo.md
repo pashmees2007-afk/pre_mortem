@@ -78,3 +78,24 @@
 - [x] Keep a single full analysis under a documented 14-request Gemini budget below the provider cap.
 - [x] Replace whole-job provider retries with a retry policy that preserves completed work.
 - [x] Add tests and documentation for the request-budget safeguard, then commit the change.
+
+## Post-Budget Live Retest
+
+- [x] Submit one realistic project task to the capped Gemini/Groq hybrid workflow.
+- [x] Confirm that the exhausted Gemini daily quota stops the run after one provider failure, without retrying the full workflow.
+- [ ] Inspect the agent trace, retained evidence, and ranked risks after the external Gemini daily quota resets.
+- [ ] Exercise the approval, mock-action, verification, and replan path if the live run succeeds.
+
+## Sustainable Provider Alternative
+
+- [x] Research current free or low-cost provider limits suitable for repeated PreMortem testing.
+- [x] Compare structured JSON support, model availability, and expected request capacity.
+- [x] Validate `qwen/qwen3.8-27b` on the supplied Groq account with the strict PreMortem plan-facts JSON probe.
+- [x] Recommend the most practical alternative and give the user the next setup step.
+
+## Groq Qwen Structured-Reasoning Migration
+
+- [x] Replace the Gemini structured client with `qwen/qwen3.8-27b` through the secure Groq client.
+- [x] Preserve Groq Compound Mini solely for the web-evidence subskill.
+- [x] Update tests, environment documentation, and provider-boundary documentation.
+- [x] Run automated checks and a live PreMortem task, then commit and push the working migration.

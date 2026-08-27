@@ -10,11 +10,15 @@ Every provider call has a server-defined prompt, bounded timeout, fixed model po
 
 ## Runtime requirements
 
-Use Node.js 20.11 or later, PostgreSQL 15 or later, Redis 7 or later, a Gemini API key, and a Groq API key. This package uses PostgreSQL for tenant data/auditability and Redis/BullMQ for durable work dispatch.
+Use Node.js 20.11 or later, PostgreSQL 15 or later, Redis 7 or later, and a Groq API key. This package uses PostgreSQL for tenant data/auditability and Redis/BullMQ for durable work dispatch.
 
-> **Provider boundary:** Gemini (`gemini-3.6-flash` by default) performs every schema-constrained reasoning task: plan normalization, investigation planning, independent scenarios, comparison, evidence critique, risk synthesis, and mitigation assessment. Groq Compound Mini is restricted to source retrieval through its built-in web-search response. No provider key or model policy is exposed to the dashboard.
+> **Provider boundary:** Groq Qwen (`qwen/qwen3.8-27b` by default) performs plan normalization, investigation planning, independent scenarios, comparison, evidence critique, risk synthesis, and mitigation assessment. Groq Compound Mini is restricted to source retrieval through its built-in web-search response. No provider key or model policy is exposed to the dashboard.
 
-The free-tier path stages the two independent Groq evidence searches rather than sending them together, uses Groq basic web search only, and retries a short Gemini quota window at the individual-call level. A full analysis has seven structured Gemini stages, with at most one retry each, so it makes no more than **14 Gemini requests**. The queue never restarts the full job after a provider failure, preventing completed stages from being duplicated. This intentionally trades a little latency for a more reliable, no-cost hackathon demo. A Gemini quota is still enforced per project/model; wait for the provider reset if it reports an exhausted daily limit.
+The free-tier path stages the two independent Groq evidence searches rather than sending them together and uses Groq basic web search only. A full analysis has seven structured Qwen stages. If Qwen first rejects JSON Schema mode, the backend falls back to JSON-object mode, validates output locally with Zod, and allows one schema repair pass. If a completed comparison, critic, synthesis, or mitigation classification remains invalid, PreMortem records an **attention** trace and uses a clearly labelled deterministic, evidence-preserving fallback rather than hiding the limitation or fabricating evidence. The queue never restarts the full job after a provider failure, preventing completed stages from being duplicated. This intentionally trades a little latency for a more reliable, no-cost hackathon demo. Groq rate limits remain enforced per model and organization.
+
+### Live validation
+
+The local validation run completed an evidence-backed subscription-payment launch analysis, retained 13 HTTPS evidence sources across two independent branches, generated three evidence-linked risks, accepted a human mitigation response, created an approved mock action, and turned a failed mock verification into `replan_required`. The trace labels provider-output fallbacks as `attention`, keeping the decision path inspectable.
 
 ```bash
 cp .env.example .env

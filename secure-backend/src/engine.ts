@@ -8,11 +8,16 @@ import {
   PlanFactsSchema,
   ScenarioSchema,
   SynthesisSchema,
+  type Comparison,
+  type CriticFinding,
   type EvidenceSource,
+  type InvestigationPlan,
+  type PlanFacts,
+  type Scenario,
+  type Synthesis,
 } from "./contracts.js";
 import { retrieveEvidence } from "./evidence.js";
-import { AppError } from "./errors.js";
-import { GeminiClient } from "./gemini.js";
+import { AppError, UpstreamError } from "./errors.js";
 import { GroqClient } from "./groq.js";
 import { SYSTEM, dataBlock } from "./prompts.js";
 import { type Repository } from "./repository.js";
@@ -49,11 +54,84 @@ function deDuplicateAcrossBranches(left: EvidenceSource[], right: EvidenceSource
 const GROQ_EVIDENCE_COOLDOWN_MS = 62_000;
 const pause = (milliseconds: number) => new Promise<void>((resolve) => setTimeout(resolve, milliseconds));
 
+function fallbackComparison(a: Scenario, b: Scenario) {
+  const categoryRelation = a.primaryCategory === b.primaryCategory ? "corroborates" : "complements";
+  return {
+    semanticRelation: categoryRelation,
+    explanation: `Branch A focuses on ${a.primaryCategory}, while Branch B focuses on ${b.primaryCategory}; both are retained as independent evidence-limited failure hypotheses.`,
+  } satisfies Pick<Comparison, "semanticRelation" | "explanation">;
+}
+
+function fallbackCritic(args: { plan: InvestigationPlan; comparison: Comparison; evidence: EvidenceSource[] }): CriticFinding {
+  const evidenceGaps = args.evidence.every((source) => source.sourceTier > 1)
+    ? ["The current source set contains no tier-one engineering guidance."]
+    : args.comparison.evidenceOverlap >= 0.5
+      ? ["The branches share substantial evidence and need an additional independent check."]
+      : [];
+  return {
+    finding: `Evidence review retained ${args.evidence.length} verifiable sources across independent research branches; the remaining gap is source independence and operational validation.`,
+    evidenceGaps,
+    nextCheck: `Ask the accountable owner to validate the highest-impact control before release, focusing on the ${args.plan.angles[0]?.category ?? "identified"} risk angle.`,
+  };
+}
+
+function fallbackSynthesis(a: Scenario, b: Scenario, comparison: Comparison): Synthesis {
+  const scenarioRisk = (scenario: Scenario, label: string): Synthesis["risks"][number] => {
+    const claims = scenario.claims;
+    const evidenceIds = [...new Set(claims.flatMap((claim) => claim.evidenceIds))].slice(0, 4);
+    const highestImpact = Math.max(...claims.map((claim) => claim.impact));
+    const highestLikelihood = Math.max(...claims.map((claim) => claim.likelihood));
+    const uncertainty: Scenario["claims"][number]["uncertainty"] = claims.some((claim) => claim.uncertainty === "high") ? "high" : claims.some((claim) => claim.uncertainty === "moderate") ? "moderate" : "low";
+    return {
+      category: scenario.primaryCategory,
+      title: `${label}: ${scenario.primaryCategory.replaceAll("_", " ")} risk`,
+      explanation: `${scenario.rootCause} ${scenario.narrative}`.slice(0, 500),
+      evidenceIds,
+      impact: highestImpact,
+      likelihood: highestLikelihood,
+      mitigation: `Assign a named owner to test and evidence the control for this ${scenario.primaryCategory.replaceAll("_", " ")} risk before release.`,
+      uncertainty,
+    };
+  };
+  const branchA = scenarioRisk(a, "Branch A");
+  const branchB = scenarioRisk(b, "Branch B");
+  return {
+    risks: [
+      branchA,
+      branchB,
+      {
+        category: a.primaryCategory,
+        title: "Combined release-readiness risk",
+        explanation: `The independent branches ${comparison.semanticRelation} each other: ${comparison.explanation}`.slice(0, 500),
+        evidenceIds: [...new Set([...branchA.evidenceIds, ...branchB.evidenceIds])].slice(0, 4),
+        impact: Math.max(branchA.impact, branchB.impact),
+        likelihood: Math.max(branchA.likelihood, branchB.likelihood),
+        mitigation: "Do not approve release until owners demonstrate the named controls, rollback behavior, and monitoring signals in a testable environment.",
+        uncertainty: branchA.uncertainty === "high" || branchB.uncertainty === "high" ? "high" : branchA.uncertainty === "moderate" || branchB.uncertainty === "moderate" ? "moderate" : "low",
+      },
+    ],
+  };
+}
+
+function fallbackControlAssessment(answer: string): { evidence: "verified" | "partial" | "unverified" | "absent"; rationale: string; gaps: string[] } {
+  const lower = answer.toLowerCase();
+  const gaps = [
+    ["named accountable owner", /owner|accountable|lead/],
+    ["repeatable payment and webhook test evidence", /test|staged|staging|evidence/],
+    ["rollback or reconciliation evidence", /rollback|reconcil/],
+    ["monitoring signal or alert evidence", /monitor|alert/],
+  ].filter(([, pattern]) => !(pattern as RegExp).test(lower)).map(([gap]) => `Provide ${gap}.`);
+  return {
+    evidence: "unverified",
+    rationale: "Provider control-assessment output was invalid. The human answer describes planned controls, but no independently verifiable test artifact or monitoring result was supplied.",
+    gaps: gaps.length ? gaps : ["Attach a completed test record or monitoring result before the risk can be treated as verified."],
+  };
+}
+
 export class PreMortemEngine {
   constructor(
     private readonly repo: Repository,
     private readonly groq: GroqClient,
-    private readonly structured: GeminiClient,
     private readonly config: Config,
   ) {}
 
@@ -62,7 +140,7 @@ export class PreMortemEngine {
     if (!run) return; // A duplicate queue delivery or previously processed idempotency key.
     try {
       await this.repo.clearTransientArtifacts(run.id);
-      const facts = await this.structured.strictJson({
+      const facts = await this.groq.strictJson({
         name: "plan_facts",
         schema: (await import("./contracts.js")).jsonSchemas.planFacts,
         output: PlanFactsSchema,
@@ -80,7 +158,7 @@ export class PreMortemEngine {
         detail: "Extracted the project outcome, timeline, team, dependencies, technical changes, and missing controls.",
       });
 
-      const investigationPlan = await this.structured.strictJson({
+      const investigationPlan = await this.groq.strictJson({
         name: "investigation_plan",
         schema: (await import("./contracts.js")).jsonSchemas.investigationPlan,
         output: InvestigationPlanSchema,
@@ -144,15 +222,23 @@ export class PreMortemEngine {
         this.createScenario(run.plan, facts, sources.left, "A", run.requestedBy),
         this.createScenario(run.plan, facts, sources.right, "B", run.requestedBy),
       ]);
-      const semantic = await this.structured.strictJson({
-        name: "scenario_comparison",
-        schema: (await import("./contracts.js")).jsonSchemas.comparator,
-        output: ComparatorSchema,
-        system: SYSTEM.comparator,
-        user: [dataBlock("SCENARIO_A", scenarioA), dataBlock("SCENARIO_B", scenarioB)].join("\n"),
-        actorId: run.requestedBy,
-        maxCompletionTokens: 300,
-      });
+      let semantic: Pick<Comparison, "semanticRelation" | "explanation">;
+      let usedComparatorFallback = false;
+      try {
+        semantic = await this.groq.strictJson({
+          name: "scenario_comparison",
+          schema: (await import("./contracts.js")).jsonSchemas.comparator,
+          output: ComparatorSchema,
+          system: SYSTEM.comparator,
+          user: [dataBlock("SCENARIO_A", scenarioA), dataBlock("SCENARIO_B", scenarioB)].join("\n"),
+          actorId: run.requestedBy,
+          maxCompletionTokens: 300,
+        });
+      } catch (error) {
+        if (!(error instanceof UpstreamError)) throw error;
+        semantic = fallbackComparison(scenarioA, scenarioB);
+        usedComparatorFallback = true;
+      }
       const comparison = classifyComparison(scenarioA, scenarioB, semantic);
 
       await this.repo.recordTrace({
@@ -166,60 +252,76 @@ export class PreMortemEngine {
         runId: run.id,
         skill: "Comparator",
         stage: "compare_branches",
-        status: comparison.displayStatus === "meaningful_disagreement" ? "attention" : "completed",
-        detail: comparison.explanation,
-        metadata: { relation: comparison.semanticRelation, evidenceOverlap: comparison.evidenceOverlap },
+        status: usedComparatorFallback || comparison.displayStatus === "meaningful_disagreement" ? "attention" : "completed",
+        detail: usedComparatorFallback ? `Provider comparison output was invalid; a transparent rule-based comparison was used. ${comparison.explanation}` : comparison.explanation,
+        metadata: { relation: comparison.semanticRelation, evidenceOverlap: comparison.evidenceOverlap, fallback: usedComparatorFallback },
       });
 
       const allowedEvidence = sources.stored.filter((source) => source.status === "retrieved" && source.sourceTier < 4);
-      const critic = await this.structured.strictJson({
-        name: "evidence_critic",
-        schema: (await import("./contracts.js")).jsonSchemas.critic,
-        output: CriticSchema,
-        system: SYSTEM.critic,
-        user: [
-          dataBlock("PLAN_FACTS", facts),
-          dataBlock("INVESTIGATION_PLAN", investigationPlan),
-          dataBlock("SCENARIO_A", scenarioA),
-          dataBlock("SCENARIO_B", scenarioB),
-          dataBlock("COMPARISON", comparison),
-          dataBlock("ALLOWED_EVIDENCE", evidenceCards(allowedEvidence)),
-        ].join("\n"),
-        actorId: run.requestedBy,
-        maxCompletionTokens: 350,
-      });
+      let critic: CriticFinding;
+      let usedCriticFallback = false;
+      try {
+        critic = await this.groq.strictJson({
+          name: "evidence_critic",
+          schema: (await import("./contracts.js")).jsonSchemas.critic,
+          output: CriticSchema,
+          system: SYSTEM.critic,
+          user: [
+            dataBlock("PLAN_FACTS", facts),
+            dataBlock("INVESTIGATION_PLAN", investigationPlan),
+            dataBlock("SCENARIO_A", scenarioA),
+            dataBlock("SCENARIO_B", scenarioB),
+            dataBlock("COMPARISON", comparison),
+            dataBlock("ALLOWED_EVIDENCE", evidenceCards(allowedEvidence)),
+          ].join("\n"),
+          actorId: run.requestedBy,
+          maxCompletionTokens: 350,
+        });
+      } catch (error) {
+        if (!(error instanceof UpstreamError)) throw error;
+        critic = fallbackCritic({ plan: investigationPlan, comparison, evidence: allowedEvidence });
+        usedCriticFallback = true;
+      }
       await this.repo.saveCritic(run.id, critic);
       await this.repo.recordTrace({
         runId: run.id,
         skill: "Evidence Critic",
         stage: "challenge_evidence",
-        status: critic.evidenceGaps.length ? "attention" : "completed",
-        detail: critic.finding,
-        metadata: { evidenceGaps: critic.evidenceGaps, nextCheck: critic.nextCheck },
+        status: usedCriticFallback || critic.evidenceGaps.length ? "attention" : "completed",
+        detail: usedCriticFallback ? `Provider critic output was invalid; a transparent evidence check was used. ${critic.finding}` : critic.finding,
+        metadata: { evidenceGaps: critic.evidenceGaps, nextCheck: critic.nextCheck, fallback: usedCriticFallback },
       });
-      const synthesis = await this.structured.strictJson({
-        name: "risk_synthesis",
-        schema: (await import("./contracts.js")).jsonSchemas.synthesis,
-        output: SynthesisSchema,
-        system: SYSTEM.synthesis,
-        user: [
-          dataBlock("PLAN_FACTS", facts),
-          dataBlock("SCENARIO_A", scenarioA),
-          dataBlock("SCENARIO_B", scenarioB),
-          dataBlock("COMPARISON", comparison),
-          dataBlock("ALLOWED_EVIDENCE", evidenceCards(allowedEvidence)),
-        ].join("\n"),
-        actorId: run.requestedBy,
-        maxCompletionTokens: 700,
-      });
+      let synthesis: Synthesis;
+      let usedSynthesisFallback = false;
+      try {
+        synthesis = await this.groq.strictJson({
+          name: "risk_synthesis",
+          schema: (await import("./contracts.js")).jsonSchemas.synthesis,
+          output: SynthesisSchema,
+          system: SYSTEM.synthesis,
+          user: [
+            dataBlock("PLAN_FACTS", facts),
+            dataBlock("SCENARIO_A", scenarioA),
+            dataBlock("SCENARIO_B", scenarioB),
+            dataBlock("COMPARISON", comparison),
+            dataBlock("ALLOWED_EVIDENCE", evidenceCards(allowedEvidence)),
+          ].join("\n"),
+          actorId: run.requestedBy,
+          maxCompletionTokens: 700,
+        });
+      } catch (error) {
+        if (!(error instanceof UpstreamError)) throw error;
+        synthesis = fallbackSynthesis(scenarioA, scenarioB, comparison);
+        usedSynthesisFallback = true;
+      }
       for (const risk of synthesis.risks) assertEvidenceReferences(risk.evidenceIds, allowedEvidence);
       await this.repo.completeRun({ runId: run.id, facts, scenarioA, scenarioB, comparison, synthesis });
       await this.repo.recordTrace({
         runId: run.id,
         skill: "Decision Skill",
         stage: "rank_risks",
-        status: "completed",
-        detail: `Created ${synthesis.risks.length} evidence-linked risks and ranked them for human review.`,
+        status: usedSynthesisFallback ? "attention" : "completed",
+        detail: `${usedSynthesisFallback ? "Provider synthesis output was invalid; a transparent evidence-preserving synthesis was used. " : ""}Created ${synthesis.risks.length} evidence-linked risks and ranked them for human review.`,
       });
     } catch (error) {
       await this.repo.failRun(run.id, error instanceof AppError ? error.code : "ANALYSIS_FAILED");
@@ -228,14 +330,14 @@ export class PreMortemEngine {
   }
 
   private async createScenario(plan: string, facts: unknown, evidence: EvidenceSource[], branch: "A" | "B", actorId: string) {
-    const scenario = await this.structured.strictJson({
+    const scenario = await this.groq.strictJson({
       name: `scenario_${branch.toLowerCase()}`,
       schema: (await import("./contracts.js")).jsonSchemas.scenario,
       output: ScenarioSchema,
       system: SYSTEM.scenario(branch),
       user: [dataBlock("PLAN_DATA", plan), dataBlock("PLAN_FACTS", facts), dataBlock("EVIDENCE_CARDS", evidenceCards(evidence))].join("\n"),
       actorId,
-      maxCompletionTokens: 650,
+      maxCompletionTokens: 900,
     });
     for (const claim of scenario.claims) assertEvidenceReferences(claim.evidenceIds, evidence);
     return scenario;
@@ -243,19 +345,27 @@ export class PreMortemEngine {
 
   async assessMitigation(args: { riskId: string; actor: { sub: string; org_id: string; role: "member" | "admin" }; answer: string }) {
     const risk = await this.repo.getRiskForActor(args.riskId, args.actor);
-    const assessment = await this.structured.strictJson({
-      name: "control_assessment",
-      schema: (await import("./contracts.js")).jsonSchemas.controlAssessment,
-      output: ControlAssessmentSchema,
-      system: SYSTEM.control,
-      user: [
-        dataBlock("RISK", { title: risk.title, mitigation: risk.mitigation, severity: risk.severity }),
-        dataBlock("TEAM_ANSWER", args.answer),
-        dataBlock("CONTROL_CRITERIA", ["named owner", "test evidence", "rollback or fallback", "monitoring signal"]),
-      ].join("\n"),
-      actorId: args.actor.sub,
-      maxCompletionTokens: 350,
-    });
+    let assessment: { evidence: "verified" | "partial" | "unverified" | "absent"; rationale: string; gaps: string[] };
+    let usedControlFallback = false;
+    try {
+      assessment = await this.groq.strictJson({
+        name: "control_assessment",
+        schema: (await import("./contracts.js")).jsonSchemas.controlAssessment,
+        output: ControlAssessmentSchema,
+        system: SYSTEM.control,
+        user: [
+          dataBlock("RISK", { title: risk.title, mitigation: risk.mitigation, severity: risk.severity }),
+          dataBlock("TEAM_ANSWER", args.answer),
+          dataBlock("CONTROL_CRITERIA", ["named owner", "test evidence", "rollback or fallback", "monitoring signal"]),
+        ].join("\n"),
+        actorId: args.actor.sub,
+        maxCompletionTokens: 350,
+      });
+    } catch (error) {
+      if (!(error instanceof UpstreamError)) throw error;
+      assessment = fallbackControlAssessment(args.answer);
+      usedControlFallback = true;
+    }
     const scoring = rescoreSeverity(risk.severity, assessment.evidence);
     await this.repo.saveMitigation({
       riskId: risk.id, actor: args.actor, answer: args.answer, evidence: assessment.evidence,
@@ -265,9 +375,9 @@ export class PreMortemEngine {
       runId: risk.analysisRunId,
       skill: "Human Challenge",
       stage: "assess_mitigation",
-      status: assessment.evidence === "verified" ? "completed" : "attention",
-      detail: assessment.rationale,
-      metadata: { evidence: assessment.evidence, before: scoring.before, after: scoring.after, gaps: assessment.gaps },
+      status: assessment.evidence === "verified" && !usedControlFallback ? "completed" : "attention",
+      detail: usedControlFallback ? `Provider control assessment was invalid; a conservative human-evidence check was used. ${assessment.rationale}` : assessment.rationale,
+      metadata: { evidence: assessment.evidence, before: scoring.before, after: scoring.after, gaps: assessment.gaps, fallback: usedControlFallback },
     });
     return { assessment, ...scoring };
   }

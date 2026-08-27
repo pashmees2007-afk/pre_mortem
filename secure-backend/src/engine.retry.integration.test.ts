@@ -7,7 +7,7 @@ const actorId = "22222222-2222-4222-8222-222222222222";
 
 const config: Config = {
   NODE_ENV: "test", PORT: 3000, DATABASE_URL: "postgres://localhost/test", REDIS_URL: "redis://localhost:6379",
-  GROQ_API_KEY: "test-groq-api-key-for-unit-tests-only-123", GROQ_RETRIEVAL_MODEL: "groq/compound-mini", GROQ_STRUCTURED_MODEL: "openai/gpt-oss-20b", GEMINI_API_KEY: "test-gemini-api-key-for-unit-tests-only-123", GEMINI_STRUCTURED_MODEL: "gemini-3.6-flash",
+  GROQ_API_KEY: "test-groq-api-key-for-unit-tests-only-123", GROQ_RETRIEVAL_MODEL: "groq/compound-mini", GROQ_STRUCTURED_MODEL: "qwen/qwen3.8-27b",
   JWT_SECRET: "this-is-a-test-secret-that-is-longer-than-thirty-two-characters", JWT_ISSUER: "premortem-api", JWT_AUDIENCE: "premortem-web",
   ANALYSIS_TIMEOUT_MS: 25_000, MAX_PLAN_CHARS: 12_000, ANALYSIS_RATE_LIMIT: 3, ANALYSIS_RATE_WINDOW_SECONDS: 600,
 };
@@ -74,7 +74,7 @@ describe("engine retry recovery", () => {
         throw new Error(`Unexpected schema request: ${args.name}`);
       }),
     };
-    const engine = new PreMortemEngine(repo as any, groq as any, groq as any, config);
+    const engine = new PreMortemEngine(repo as any, groq as any, config);
 
     await expect(engine.run(runId)).rejects.toThrow("temporary retrieval outage");
     await engine.run(runId);
