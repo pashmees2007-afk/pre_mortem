@@ -140,3 +140,11 @@
 - [x] Submit a high-risk fintech startup scenario with a tight regulatory deadline.
 - [x] Inspect the two independent research branches, their evidence quality, and the comparison result. The run retained 14 sources, but only branch B retained a Tier-1 source; the critic correctly flagged the gap in branch A.
 - [x] Report the evidence-linked risk register and any trace-level fallback or provider issue.
+
+## Short-Stage Qwen Reliability
+
+- [x] Capture the malformed comparator, critic, and decision output patterns from completed live runs.
+- [x] Tighten their schemas and prompts while preserving evidence-only inputs and transparent failures.
+- [x] Add focused tests for valid model output and malformed-output recovery. The complete backend suite now has 29 passing tests.
+- [ ] Run a fresh comparative pipeline and record which, if any, stages still require fallback. This requires a local non-production Groq credential; none is available in the current session.
+- [ ] Commit and push the validated reliability improvement.

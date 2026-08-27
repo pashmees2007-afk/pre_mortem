@@ -34,6 +34,32 @@ function evidenceCards(sources: EvidenceSource[]) {
   }));
 }
 
+function comparisonCard(scenario: Scenario) {
+  return {
+    primaryCategory: scenario.primaryCategory,
+    contributingCategories: scenario.contributingCategories,
+    rootCause: scenario.rootCause,
+    claims: scenario.claims.map((claim) => ({
+      category: claim.category,
+      statement: claim.statement,
+      evidenceIds: claim.evidenceIds,
+      impact: claim.impact,
+      likelihood: claim.likelihood,
+      uncertainty: claim.uncertainty,
+    })),
+  };
+}
+
+function criticEvidenceCards(sources: EvidenceSource[]) {
+  return sources.filter((source) => source.status === "retrieved" && source.sourceTier < 4).map((source) => ({
+    id: source.id,
+    branch: source.branch,
+    tier: source.sourceTier,
+    title: source.title,
+    snippet: source.snippet.slice(0, 600),
+  }));
+}
+
 function assertEvidenceReferences(referenceIds: string[], allowedSources: EvidenceSource[]) {
   const allowed = new Set(allowedSources.map((source) => source.id));
   if (!referenceIds.length || referenceIds.some((id) => !allowed.has(id))) {
@@ -231,9 +257,10 @@ export class PreMortemEngine {
           schema: (await import("./contracts.js")).jsonSchemas.comparator,
           output: ComparatorSchema,
           system: SYSTEM.comparator,
-          user: [dataBlock("SCENARIO_A", scenarioA), dataBlock("SCENARIO_B", scenarioB)].join("\n"),
+          user: [dataBlock("SCENARIO_A", comparisonCard(scenarioA)), dataBlock("SCENARIO_B", comparisonCard(scenarioB))].join("\n"),
           actorId: run.requestedBy,
-          maxCompletionTokens: 300,
+          maxCompletionTokens: 550,
+          responseMode: "object",
         });
       } catch (error) {
         if (!(error instanceof UpstreamError)) throw error;
@@ -270,13 +297,14 @@ export class PreMortemEngine {
           user: [
             dataBlock("PLAN_FACTS", facts),
             dataBlock("INVESTIGATION_PLAN", investigationPlan),
-            dataBlock("SCENARIO_A", scenarioA),
-            dataBlock("SCENARIO_B", scenarioB),
+            dataBlock("SCENARIO_A", comparisonCard(scenarioA)),
+            dataBlock("SCENARIO_B", comparisonCard(scenarioB)),
             dataBlock("COMPARISON", comparison),
-            dataBlock("ALLOWED_EVIDENCE", evidenceCards(allowedEvidence)),
+            dataBlock("ALLOWED_EVIDENCE", criticEvidenceCards(allowedEvidence)),
           ].join("\n"),
           actorId: run.requestedBy,
-          maxCompletionTokens: 350,
+          maxCompletionTokens: 650,
+          responseMode: "object",
         });
       } catch (error) {
         if (!(error instanceof UpstreamError)) throw error;
@@ -360,7 +388,8 @@ export class PreMortemEngine {
           dataBlock("CONTROL_CRITERIA", ["named owner", "test evidence", "rollback or fallback", "monitoring signal"]),
         ].join("\n"),
         actorId: args.actor.sub,
-        maxCompletionTokens: 350,
+        maxCompletionTokens: 550,
+        responseMode: "object",
       });
     } catch (error) {
       if (!(error instanceof UpstreamError)) throw error;

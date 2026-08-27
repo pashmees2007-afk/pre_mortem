@@ -7,6 +7,39 @@ type GroqResponse = {
   choices?: Array<{ message?: { content?: string; executed_tools?: unknown[] } }>;
 };
 
+type ResponseMode = "schema" | "object";
+
+function parseJsonObject(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    // Qwen can occasionally leave a short prose or reasoning prefix before an
+    // otherwise intact JSON object. Extracting that object changes no values;
+    // the caller's Zod schema still decides whether it is safe to use.
+    const start = text.indexOf("{");
+    if (start < 0) throw new Error("No JSON object found");
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+    for (let index = start; index < text.length; index += 1) {
+      const character = text[index];
+      if (inString) {
+        if (escaped) escaped = false;
+        else if (character === "\\") escaped = true;
+        else if (character === '"') inString = false;
+        continue;
+      }
+      if (character === '"') inString = true;
+      else if (character === "{") depth += 1;
+      else if (character === "}") {
+        depth -= 1;
+        if (depth === 0) return JSON.parse(text.slice(start, index + 1));
+      }
+    }
+    throw new Error("Incomplete JSON object");
+  }
+}
+
 export class GroqClient {
   constructor(private readonly config: Config) {}
 
@@ -38,7 +71,7 @@ export class GroqClient {
     return payload as GroqResponse;
   }
 
-  async strictJson<T extends z.ZodType>(args: { model?: string; name: string; schema: Record<string, unknown>; output: T; system: string; user: string; actorId: string; maxCompletionTokens?: number }) {
+  async strictJson<T extends z.ZodType>(args: { model?: string; name: string; schema: Record<string, unknown>; output: T; system: string; user: string; actorId: string; maxCompletionTokens?: number; responseMode?: ResponseMode }) {
     const outputContract = JSON.stringify(args.schema);
     const request = {
       model: args.model ?? this.config.GROQ_STRUCTURED_MODEL,
@@ -54,29 +87,38 @@ export class GroqClient {
       ] satisfies GroqMessage[],
     };
     let raw: GroqResponse;
-    try {
-      raw = await this.request({
-        ...request,
-      response_format: { type: "json_schema", json_schema: { name: args.name, strict: true, schema: args.schema } },
-      });
-    } catch (error) {
-      const schemaRejected = error instanceof UpstreamError
-        && (error.message.includes("Failed to validate JSON") || error.message.includes("Generated JSON does not match the expected schema"));
-      if (!schemaRejected) throw error;
+    if (args.responseMode === "object") {
+      // Compact stages have only a few keys but carry substantial evidence as
+      // input. JSON-object mode avoids native-schema rejection from Qwen while
+      // retaining local Zod validation and the same recovery ladder.
       raw = await this.request({ ...request, response_format: { type: "json_object" } });
+    } else {
+      try {
+        raw = await this.request({
+          ...request,
+          response_format: { type: "json_schema", json_schema: { name: args.name, strict: true, schema: args.schema } },
+        });
+      } catch (error) {
+        const schemaRejected = error instanceof UpstreamError
+          && (error.message.includes("Failed to validate JSON") || error.message.includes("Generated JSON does not match the expected schema"));
+        if (!schemaRejected) throw error;
+        raw = await this.request({ ...request, response_format: { type: "json_object" } });
+      }
     }
     const text = raw.choices?.[0]?.message?.content;
     if (!text) throw new UpstreamError("The analysis provider returned an empty response");
-    let json: unknown;
-    try { json = JSON.parse(text); } catch { throw new UpstreamError("The analysis provider returned invalid JSON"); }
-    let parsed = args.output.safeParse(json);
-    if (parsed.success) return parsed.data;
-
-    // Qwen occasionally emits valid JSON that misses a field after JSON-schema mode is rejected.
-    // Regenerate once with the failed field messages, then make one bounded data-only repair pass.
-    // Zod remains the final authority throughout the recovery ladder.
     let candidateText = text;
-    let fields = parsed.error.issues.map((issue) => `${issue.path.join(".") || "root"}: ${issue.message}`).slice(0, 5).join("; ");
+    let fields = "root: response was not a complete JSON object";
+    try {
+      const parsed = args.output.safeParse(parseJsonObject(text));
+      if (parsed.success) return parsed.data;
+      fields = parsed.error.issues.map((issue) => `${issue.path.join(".") || "root"}: ${issue.message}`).slice(0, 5).join("; ");
+    } catch { /* Ask for a fresh object before attempting a bounded repair. */ }
+
+    // Qwen can emit either valid JSON with missing fields or truncated JSON.
+    // Regenerate once with local validation feedback, then make one bounded
+    // data-only repair pass. Zod remains the final authority throughout.
+    // Zod remains the final authority throughout the recovery ladder.
     const regenerated = await this.request({
       model: request.model,
       temperature: 0,
@@ -91,11 +133,14 @@ export class GroqClient {
     const regeneratedText = regenerated.choices?.[0]?.message?.content;
     if (regeneratedText) {
       try {
-        parsed = args.output.safeParse(JSON.parse(regeneratedText));
+        const parsed = args.output.safeParse(parseJsonObject(regeneratedText));
         if (parsed.success) return parsed.data;
         candidateText = regeneratedText;
         fields = parsed.error.issues.map((issue) => `${issue.path.join(".") || "root"}: ${issue.message}`).slice(0, 5).join("; ");
-      } catch { /* Preserve the original invalid candidate for the final repair pass. */ }
+      } catch {
+        candidateText = regeneratedText;
+        fields = "root: regenerated response was not a complete JSON object";
+      }
     }
     const repaired = await this.request({
       model: request.model,
@@ -111,7 +156,7 @@ export class GroqClient {
     const repairedText = repaired.choices?.[0]?.message?.content;
     if (!repairedText) throw new UpstreamError("The analysis provider returned an empty repair response");
     let repairedJson: unknown;
-    try { repairedJson = JSON.parse(repairedText); } catch { throw new UpstreamError("The analysis provider returned invalid repair JSON"); }
+    try { repairedJson = parseJsonObject(repairedText); } catch { throw new UpstreamError("The analysis provider returned invalid repair JSON"); }
     const repairedParsed = args.output.safeParse(repairedJson);
     if (!repairedParsed.success) {
       const repairedFields = repairedParsed.error.issues.map((issue) => `${issue.path.join(".") || "root"}: ${issue.message}`).slice(0, 5).join("; ");

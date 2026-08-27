@@ -13,6 +13,8 @@ const config: Config = {
 const Output = z.object({ outcome: z.string(), dependencies: z.array(z.string()) });
 const schema = { type: "object", properties: { outcome: { type: "string" }, dependencies: { type: "array", items: { type: "string" } } }, required: ["outcome", "dependencies"] };
 const validResponse = { choices: [{ message: { content: JSON.stringify({ outcome: "Ship integration", dependencies: ["gateway"] }) } }] };
+const ComparisonOutput = z.object({ semanticRelation: z.enum(["corroborates", "complements", "contradicts", "unresolved"]), explanation: z.string() }).strict();
+const comparisonSchema = { type: "object", additionalProperties: false, properties: { semanticRelation: { type: "string" }, explanation: { type: "string" } }, required: ["semanticRelation", "explanation"] };
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -43,6 +45,15 @@ describe("GroqClient structured reasoning", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
+  it("regenerates a typed object when the initial Qwen response is truncated JSON", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(new Response(JSON.stringify({ choices: [{ message: { content: '{"outcome":"Truncated","dependencies":[' } }] }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(validResponse), { status: 200 }));
+    await expect(new GroqClient(config).strictJson({ name: "plan_facts", schema, output: Output, system: "system", user: "plan", actorId: "actor" }))
+      .resolves.toEqual({ outcome: "Ship integration", dependencies: ["gateway"] });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
   it("falls back to JSON-object mode when the provider rejects a JSON schema", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch")
       .mockResolvedValueOnce(new Response(JSON.stringify({ error: { message: "Generated JSON does not match the expected schema" } }), { status: 400 }))
@@ -50,5 +61,18 @@ describe("GroqClient structured reasoning", () => {
     await expect(new GroqClient(config).strictJson({ name: "plan_facts", schema, output: Output, system: "system", user: "plan", actorId: "actor" }))
       .resolves.toEqual({ outcome: "Ship integration", dependencies: ["gateway"] });
     expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("uses JSON-object mode first for a compact comparison stage", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ semanticRelation: "complements", explanation: "The branches expose separate release risks." }) } }] }), { status: 200 }));
+    await expect(new GroqClient(config).strictJson({ name: "scenario_comparison", schema: comparisonSchema, output: ComparisonOutput, system: "system", user: "scenarios", actorId: "actor", responseMode: "object" }))
+      .resolves.toEqual({ semanticRelation: "complements", explanation: "The branches expose separate release risks." });
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toMatchObject({ response_format: { type: "json_object" } });
+  });
+
+  it("validates an intact JSON object after accidental Qwen framing text", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ choices: [{ message: { content: "Result follows:\n{\"outcome\":\"Ship integration\",\"dependencies\":[\"gateway\"]}" } }] }), { status: 200 }));
+    await expect(new GroqClient(config).strictJson({ name: "plan_facts", schema, output: Output, system: "system", user: "plan", actorId: "actor" }))
+      .resolves.toEqual({ outcome: "Ship integration", dependencies: ["gateway"] });
   });
 });
