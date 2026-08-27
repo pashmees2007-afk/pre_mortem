@@ -67,4 +67,26 @@ describe("trusted evidence retrieval", () => {
     expect(webSearch).toHaveBeenCalledTimes(3);
     expect(webSearch.mock.calls[2]?.[0].includeDomains).toContain("sre.google");
   });
+
+  it("uses payment-system and financial-control Tier-1 domains for a fintech plan", async () => {
+    const fintechFacts: PlanFacts = {
+      ...facts,
+      outcome: "Launch a cross-border payments wallet",
+      dependencies: ["KYC vendor", "sponsor bank"],
+      technicalChanges: ["Settlement reconciliation"],
+      missingControls: ["AML threshold testing"],
+    };
+    const webSearch = vi.fn().mockResolvedValue(toolResponse([
+      { url: "https://www.fsb.org/work-of-the-fsb/financial-innovation-and-structural-change/cross-border-payments/", title: "Cross-border Payments", content: "The Financial Stability Board coordinates international cross-border payments improvement work." },
+      { url: "https://ofac.treasury.gov/media/16331/download?inline", title: "Compliance Commitments", content: "A risk-based sanctions compliance program includes risk assessment, controls, testing, and training." },
+    ]));
+    const client = { webSearch } as unknown as GroqClient;
+
+    const sources = await retrieveEvidence({ client, facts: fintechFacts, branch: "B", actorId: "actor" });
+
+    expect(sources).toHaveLength(2);
+    expect(sources.every((source) => source.sourceTier === 1)).toBe(true);
+    expect(webSearch.mock.calls[0]?.[0].includeDomains).toContain("fsb.org");
+    expect(webSearch.mock.calls[0]?.[0].includeDomains).toContain("ofac.treasury.gov");
+  });
 });

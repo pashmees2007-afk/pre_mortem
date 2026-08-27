@@ -2,13 +2,22 @@ import { randomUUID } from "node:crypto";
 import type { EvidenceSource, PlanFacts } from "./contracts.js";
 import { GroqClient } from "./groq.js";
 
-const TIER_ONE_DOMAINS = new Set(["kubernetes.io", "docs.kubernetes.io", "sre.google", "github.blog", "blog.cloudflare.com", "aws.amazon.com", "docs.aws.amazon.com", "learn.microsoft.com", "docs.stripe.com", "developer.mozilla.org"]);
+const ENGINEERING_TIER_ONE_DOMAINS = ["kubernetes.io", "docs.kubernetes.io", "sre.google", "github.blog", "blog.cloudflare.com", "aws.amazon.com", "docs.aws.amazon.com", "learn.microsoft.com", "docs.stripe.com", "developer.mozilla.org"];
+const FINTECH_TIER_ONE_DOMAINS = ["fsb.org", "bankofengland.co.uk", "ofac.treasury.gov", "bsaaml.ffiec.gov", "fincen.gov", "fca.org.uk", "ico.org.uk", "docs.stripe.com", "aws.amazon.com", "sre.google"];
+const TIER_ONE_DOMAINS = new Set([...ENGINEERING_TIER_ONE_DOMAINS, ...FINTECH_TIER_ONE_DOMAINS]);
 const TIER_TWO_SUFFIXES = [".edu", ".gov", ".org"];
 
 function classifyTier(hostname: string): 1 | 2 | 3 {
-  if (TIER_ONE_DOMAINS.has(hostname)) return 1;
+  const canonicalHostname = hostname.toLowerCase().replace(/^www\./, "");
+  if (TIER_ONE_DOMAINS.has(canonicalHostname)) return 1;
   if (TIER_TWO_SUFFIXES.some((suffix) => hostname.endsWith(suffix))) return 2;
   return 3;
+}
+
+function trustedDomainsFor(facts: PlanFacts, plannedQuery?: string) {
+  const context = [facts.outcome, facts.dependencies.join(" "), facts.technicalChanges.join(" "), facts.missingControls.join(" "), plannedQuery ?? ""].join(" ").toLowerCase();
+  const fintechPattern = /fintech|payment|wallet|payout|settlement|reconciliation|kyc|aml|sanction|bank|funds|card|currency|financial/;
+  return fintechPattern.test(context) ? FINTECH_TIER_ONE_DOMAINS : ENGINEERING_TIER_ONE_DOMAINS;
 }
 
 function branchQuery(facts: PlanFacts, branch: "A" | "B", plannedQuery?: string) {
@@ -49,10 +58,10 @@ function extractEvidence(args: { response: Awaited<ReturnType<GroqClient["webSea
 
 export async function retrieveEvidence(args: { client: GroqClient; facts: PlanFacts; branch: "A" | "B"; actorId: string; includeDomains?: string[]; plannedQuery?: string }): Promise<EvidenceSource[]> {
   const query = branchQuery(args.facts, args.branch, args.plannedQuery);
-  const trustedDomains = args.includeDomains?.length ? args.includeDomains : [...TIER_ONE_DOMAINS];
+  const trustedDomains = args.includeDomains?.length ? args.includeDomains : trustedDomainsFor(args.facts, args.plannedQuery);
   const seen = new Set<string>();
   const sources: EvidenceSource[] = [];
-  const trustedQuery = `Find official engineering documentation, production guidance, or incident learning relevant to this project-risk question. ${query}`;
+  const trustedQuery = `Find official guidance, control expectations, engineering documentation, production guidance, or incident learning relevant to this project-risk question. ${query}`;
   const trustedResponse = await args.client.webSearch({ query: trustedQuery, actorId: args.actorId, includeDomains: trustedDomains });
   extractEvidence({ response: trustedResponse, branch: args.branch, seen, sources });
   if (sources.length >= 2) return sources;

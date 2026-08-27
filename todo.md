@@ -134,3 +134,9 @@
 - [x] Run one fresh full PreMortem pipeline using the verified replacement Groq key.
 - [x] Inspect the full agent trace, retained evidence, and final risk register. The run retained 16 Tier-1 sources and generated three severity-5 operational-readiness risks.
 - [x] Confirm that the provider returned no quota, rate-limit, or access error.
+
+## Comparative Fintech Pre-Mortem
+
+- [x] Submit a high-risk fintech startup scenario with a tight regulatory deadline.
+- [x] Inspect the two independent research branches, their evidence quality, and the comparison result. The run retained 14 sources, but only branch B retained a Tier-1 source; the critic correctly flagged the gap in branch A.
+- [x] Report the evidence-linked risk register and any trace-level fallback or provider issue.

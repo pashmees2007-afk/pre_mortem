@@ -18,7 +18,7 @@ The free-tier path stages the two independent Groq evidence searches rather than
 
 ### Evidence quality policy
 
-Each research branch queries a maintained Tier-1 domain set first: official Kubernetes and Stripe documentation, Google SRE guidance, AWS documentation, Microsoft Learn, Cloudflare engineering material, GitHub engineering material, and MDN. When that query returns fewer than two usable sources, the branch runs a broad search to fill the remaining slots, then makes one final official-guidance search before declaring the evidence insufficient. Every source still must pass the HTTPS, title, snippet, deduplication, and source-ledger checks. The critic evaluates Tier-1 coverage separately for branch A and branch B, not merely across the combined result.
+Each research branch queries a maintained, topic-specific Tier-1 domain set first. Software plans use official Kubernetes and Stripe documentation, Google SRE guidance, AWS documentation, Microsoft Learn, Cloudflare engineering material, GitHub engineering material, and MDN. Payment, wallet, cross-border, KYC, AML, sanctions, settlement, or reconciliation plans use relevant Financial Stability Board, Bank of England, U.S. Treasury OFAC, FFIEC BSA/AML, FinCEN, FCA, ICO, Stripe, AWS, and Google SRE material. When that query returns fewer than two usable sources, the branch runs a broad search to fill the remaining slots, then makes one final official-guidance search before declaring the evidence insufficient. Every source still must pass the HTTPS, title, snippet, deduplication, and source-ledger checks. The critic evaluates Tier-1 coverage separately for branch A and branch B, not merely across the combined result.
 
 ### Live validation
 
