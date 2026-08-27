@@ -150,3 +150,12 @@
 - [x] Capture the updated live comparator and critic trace metadata, confirming their `fallback` flags are false.
 - [x] Pace the live Qwen stages and cap their evidence cards so the on-demand 8,000 TPM limit does not interrupt scenario generation.
 - [ ] Commit and push the validated reliability improvement.
+
+## Final Synthesis and MVP Audit
+
+- [x] Inspect the live risk-synthesis validation failure and make its typed output more reliable without weakening evidence-ID validation.
+- [x] Add synthesis-specific recovery tests and confirm truthful fallback metadata in the agent trace. The backend suite now has 32 passing tests.
+- [x] Run one new live fintech analysis and confirm every Qwen stage completes without fallback. Run `f507abdd-833f-4cdd-983c-537f6ca808d9` completed with ten retained sources, nine Tier-1 sources, and no fallback metadata.
+- [x] Parse both millisecond and decimal-second Groq retry hints before the next live validation attempt.
+- [x] Inspect the shipped dashboard and backend feature inventory, then list the remaining MVP and production features precisely. The interactive Agent Map works on desktop and mobile; dashboard checks/build pass, but the map is a separate explanatory site and the product dashboard lacks account/project onboarding, durable run-history recovery, and approved external action integrations.
+- [ ] Commit and push the final reliability and status-audit changes.

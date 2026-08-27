@@ -61,10 +61,12 @@ export class GroqClient {
     try {
       return await this.request(body);
     } catch (error) {
-      const hint = error instanceof UpstreamError ? error.message.match(/try again in (\d+)ms/i) : null;
+      const hint = error instanceof UpstreamError ? error.message.match(/try again in\s+(\d+(?:\.\d+)?)\s*(ms|s|seconds?)/i) : null;
       if (!hint) throw error;
-      const hintedDelay = Number.parseInt(hint[1] ?? "0", 10);
-      const waitMs = this.config.NODE_ENV === "test" ? 0 : Math.max(1_000, hintedDelay + 250);
+      const value = Number.parseFloat(hint[1] ?? "0");
+      const unit = hint[2]?.toLowerCase();
+      const hintedDelay = unit === "ms" ? value : value * 1_000;
+      const waitMs = this.config.NODE_ENV === "test" ? 0 : Math.max(1_000, Math.ceil(hintedDelay + 250));
       await new Promise<void>((resolve) => setTimeout(resolve, waitMs));
       return this.request(body);
     }

@@ -62,6 +62,20 @@ function criticEvidenceCards(sources: EvidenceSource[]) {
   }));
 }
 
+function synthesisEvidenceCards(sources: EvidenceSource[], scenarios: Scenario[]) {
+  const citedEvidenceIds = new Set(scenarios.flatMap((scenario) => scenario.claims.flatMap((claim) => claim.evidenceIds)));
+  return sources.filter((source) => citedEvidenceIds.has(source.id))
+    .sort((left, right) => left.sourceTier - right.sourceTier)
+    .slice(0, 6)
+    .map((source) => ({
+      id: source.id,
+      branch: source.branch,
+      tier: source.sourceTier,
+      title: source.title,
+      snippet: source.snippet.slice(0, 360),
+    }));
+}
+
 function assertEvidenceReferences(referenceIds: string[], allowedSources: EvidenceSource[]) {
   const allowed = new Set(allowedSources.map((source) => source.id));
   if (!referenceIds.length || referenceIds.some((id) => !allowed.has(id))) {
@@ -332,14 +346,14 @@ export class PreMortemEngine {
           output: SynthesisSchema,
           system: SYSTEM.synthesis,
           user: [
-            dataBlock("PLAN_FACTS", facts),
-            dataBlock("SCENARIO_A", scenarioA),
-            dataBlock("SCENARIO_B", scenarioB),
+            dataBlock("SCENARIO_A", comparisonCard(scenarioA)),
+            dataBlock("SCENARIO_B", comparisonCard(scenarioB)),
             dataBlock("COMPARISON", comparison),
-            dataBlock("ALLOWED_EVIDENCE", evidenceCards(allowedEvidence)),
+            dataBlock("ALLOWED_EVIDENCE", synthesisEvidenceCards(allowedEvidence, [scenarioA, scenarioB])),
           ].join("\n"),
           actorId: run.requestedBy,
-          maxCompletionTokens: 700,
+          maxCompletionTokens: 1_000,
+          responseMode: "object",
         });
       } catch (error) {
         if (!(error instanceof UpstreamError)) throw error;

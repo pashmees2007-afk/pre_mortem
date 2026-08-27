@@ -87,12 +87,14 @@ describe("engine retry recovery", () => {
     expect(repo.completeRun.mock.calls[0]?.[0]).toMatchObject({ runId, facts });
     const compactStages = groq.strictJson.mock.calls
       .map(([args]: [{ name: string; responseMode?: string; user: string }]) => args)
-      .filter((args) => args.name === "scenario_comparison" || args.name === "evidence_critic");
+      .filter((args) => args.name === "scenario_comparison" || args.name === "evidence_critic" || args.name === "risk_synthesis");
     expect(compactStages).toEqual(expect.arrayContaining([
       expect.objectContaining({ name: "scenario_comparison", responseMode: "object" }),
       expect.objectContaining({ name: "evidence_critic", responseMode: "object" }),
+      expect.objectContaining({ name: "risk_synthesis", responseMode: "object" }),
     ]));
     expect(compactStages.find((args) => args.name === "scenario_comparison")?.user).not.toContain('"narrative"');
     expect(compactStages.find((args) => args.name === "evidence_critic")?.user).not.toContain('"url"');
+    expect(compactStages.find((args) => args.name === "risk_synthesis")?.user).not.toContain('"narrative"');
   });
 });
