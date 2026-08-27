@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { AlertTriangle, ArrowRight, BadgeCheck, BookOpenText, CalendarDays, ChevronRight, CircleCheck, CircleDashed, ClipboardCheck, FileSearch, FlaskConical, Layers3, LoaderCircle, LogOut, Network, RotateCcw, ShieldCheck, Sparkles, UserRoundCheck, Waypoints } from "lucide-react";
+import { AlertTriangle, ArrowRight, BadgeCheck, BookOpenText, CalendarDays, ChevronRight, CircleCheck, CircleDashed, CheckCircle2, ClipboardCheck, FileSearch, FlaskConical, GitFork, Layers3, ListTodo, LoaderCircle, LogOut, Network, RotateCcw, Search, ShieldCheck, Sparkles, UserRoundCheck, Waypoints } from "lucide-react";
 import { approveMockAction, createAnalysis, createProject, getAnalysis, getSession, listProjectAnalyses, listProjects, renameProject, signOut, submitMitigation, verifyMockAction } from "@/lib/api";
 import { demoAnalysis, samplePlan } from "@/lib/demo";
 import { matrixStatus } from "@/lib/matrix";
@@ -17,6 +17,14 @@ const nav = [
   [ClipboardCheck, "Approval & action", "#actions"],
   [BookOpenText, "Evidence ledger", "#sources"],
   [Waypoints, "How the agent works", "/agent-map"],
+] as const;
+
+const liveStages = [
+  ["01", "Scope", "Project plan", "#workspace", FileSearch],
+  ["02", "Investigate", "Two research branches", "#agent-flow", Search],
+  ["03", "Challenge", "Evidence critic", "#agent-flow", GitFork],
+  ["04", "Decide", "Risk register", "#risks", ListTodo],
+  ["05", "Verify", "Human-approved loop", "#actions", CheckCircle2],
 ] as const;
 
 function severityClass(severity: number) {
@@ -273,8 +281,13 @@ export default function DashboardPage() {
 
       <main className="main">
         <div className="topline"><span className="eyebrow">Evidence-led delivery review</span><span className="status"><span className="dot" />{isDemo ? "Example dossier" : analysis.status}</span></div>
-        <h1>Find the failure path<br /><em>before</em> you ship it.</h1>
-        <p className="lede">A legible pre-mortem that keeps research, independent failure narratives, disagreement, and mitigations in one decision record.</p>
+        <h1>Find the failure path.<br /><em>Then close the loop.</em></h1>
+        <p className="lede">This is the live Agent Map: a project plan moves through independent research, evidence challenge, human-approved action, and verified learning.</p>
+
+        <section className="live-agent-map" aria-label="Live PreMortem Agent Map">
+          <div className="live-map-heading"><span className="eyebrow">Live agent map</span><span className="hint">Click a stage to inspect its live record</span></div>
+          <div className="live-stage-list">{liveStages.map(([number, label, detail, href, Icon], index) => <a href={href} className={`live-stage ${running && index < 2 ? "working" : ""}`} key={number}><span className="live-stage-number">{number}</span><Icon size={16} /><span><strong>{label}</strong><small>{detail}</small></span>{index < liveStages.length - 1 && <ArrowRight className="live-stage-arrow" size={15} />}</a>)}</div>
+        </section>
 
         {session ? <ProjectHub session={session} projects={projects} projectId={projectId} history={history} loading={historyLoading} onSelect={selectManagedProject} onCreate={createManagedProject} onRename={renameManagedProject} onOpenRun={openSavedRun} /> : <div className="guest-banner"><span><Sparkles size={15} /> Illustrative dossier only</span><button type="button" className="text-action" onClick={() => setGuestDemo(false)}>Sign in to run your own review <ArrowRight size={14} /></button></div>}
 

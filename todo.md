@@ -171,3 +171,13 @@
 ### Validation notes
 
 - Local endpoint checks passed for account registration, HTTP-only session cookie issuance, authenticated project creation, project listing, and project-scoped history retrieval. Browser checks also passed for workspace registration, managed project creation, the dashboard Agent Map route, and return navigation to the live workspace.
+
+## Application-Boundary Correction
+
+- [x] Confirm whether the requested website changes belong in the standalone Agent Map explainer, the GitHub dashboard application, or a single merged public product site before making further UI changes. The approved direction is one merged product experience.
+
+## Unified Agent Map Product Interface
+
+- [x] Apply the standalone Agent Map’s case-file visual language and guided workflow to the real dashboard landing and workspace journey.
+- [x] Keep the secure Next.js dashboard as the single live-product surface so account sessions, project history, and analysis actions remain server-protected.
+- [x] Retain the standalone map only as an architecture explainer until a public production dashboard URL is configured.
