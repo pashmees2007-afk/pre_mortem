@@ -1,4 +1,5 @@
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID, scrypt as scryptCallback, timingSafeEqual } from "node:crypto";
+import { promisify } from "node:util";
 import type { Pool, PoolClient } from "pg";
 import type { Actor } from "./identity.js";
 import type { Comparison, CriticFinding, EvidenceSource, InvestigationPlan, PlanFacts, Scenario, Synthesis } from "./contracts.js";
@@ -31,9 +32,127 @@ export type StoredRisk = {
 };
 
 type TraceStatus = "completed" | "attention" | "approved" | "verified" | "failed" | "replan";
+const scrypt = promisify(scryptCallback);
+
+export type ProductSession = {
+  actor: Actor;
+  user: { id: string; email: string; displayName: string | null };
+  organization: { id: string; name: string };
+};
+
+async function hashPassword(password: string) {
+  const salt = randomBytes(16);
+  const derived = await scrypt(password, salt, 64) as Buffer;
+  return `scrypt$${salt.toString("base64url")}$${derived.toString("base64url")}`;
+}
+
+async function verifyPassword(password: string, stored: string) {
+  const [algorithm, encodedSalt, encodedHash] = stored.split("$");
+  if (algorithm !== "scrypt" || !encodedSalt || !encodedHash) return false;
+  const expected = Buffer.from(encodedHash, "base64url");
+  const actual = await scrypt(password, Buffer.from(encodedSalt, "base64url"), expected.length) as Buffer;
+  return expected.length === actual.length && timingSafeEqual(expected, actual);
+}
 
 export class Repository {
   constructor(private readonly pool: Pool) {}
+
+  async registerAccount(input: { organizationName: string; displayName: string; email: string; password: string }): Promise<ProductSession> {
+    const userId = randomUUID();
+    const organizationId = randomUUID();
+    const passwordHash = await hashPassword(input.password);
+    try {
+      return await transaction(this.pool, async (client) => {
+        const existing = await client.query(`SELECT 1 FROM users WHERE lower(email) = lower($1) LIMIT 1`, [input.email]);
+        if (existing.rowCount) throw new AppError(409, "EMAIL_IN_USE", "An account already exists for this email");
+        await client.query(`INSERT INTO organizations (id, name) VALUES ($1,$2)`, [organizationId, input.organizationName]);
+        await client.query(`INSERT INTO users (id, email, display_name) VALUES ($1,$2,$3)`, [userId, input.email, input.displayName]);
+        await client.query(`INSERT INTO user_credentials (user_id, password_hash) VALUES ($1,$2)`, [userId, passwordHash]);
+        await client.query(`INSERT INTO memberships (organization_id, user_id, role) VALUES ($1,$2,'admin')`, [organizationId, userId]);
+        return {
+          actor: { sub: userId, org_id: organizationId, role: "admin" },
+          user: { id: userId, email: input.email, displayName: input.displayName },
+          organization: { id: organizationId, name: input.organizationName },
+        };
+      });
+    } catch (error) {
+      if (error instanceof AppError) throw error;
+      if ((error as { code?: string }).code === "23505") throw new AppError(409, "EMAIL_IN_USE", "An account already exists for this email");
+      throw error;
+    }
+  }
+
+  async authenticateAccount(input: { email: string; password: string }): Promise<ProductSession> {
+    const result = await this.pool.query<{
+      id: string; email: string; displayName: string | null; passwordHash: string; organizationId: string; organizationName: string; role: "member" | "admin";
+    }>(`SELECT u.id, u.email, u.display_name AS "displayName", c.password_hash AS "passwordHash", o.id AS "organizationId", o.name AS "organizationName", m.role
+        FROM users u JOIN user_credentials c ON c.user_id = u.id JOIN memberships m ON m.user_id = u.id JOIN organizations o ON o.id = m.organization_id
+        WHERE lower(u.email) = lower($1) ORDER BY CASE WHEN m.role = 'admin' THEN 0 ELSE 1 END, o.created_at ASC LIMIT 1`, [input.email]);
+    const row = result.rows[0];
+    if (!row || !(await verifyPassword(input.password, row.passwordHash))) {
+      throw new AppError(401, "INVALID_CREDENTIALS", "Invalid email or password");
+    }
+    return {
+      actor: { sub: row.id, org_id: row.organizationId, role: row.role },
+      user: { id: row.id, email: row.email, displayName: row.displayName },
+      organization: { id: row.organizationId, name: row.organizationName },
+    };
+  }
+
+  async getSession(actor: Actor): Promise<ProductSession> {
+    const result = await this.pool.query<{ id: string; email: string; displayName: string | null; organizationId: string; organizationName: string; role: "member" | "admin" }>(
+      `SELECT u.id, u.email, u.display_name AS "displayName", o.id AS "organizationId", o.name AS "organizationName", m.role
+       FROM users u JOIN memberships m ON m.user_id = u.id JOIN organizations o ON o.id = m.organization_id
+       WHERE u.id = $1 AND o.id = $2 LIMIT 1`, [actor.sub, actor.org_id],
+    );
+    const row = result.rows[0];
+    if (!row || !row.email) throw new AppError(401, "UNAUTHENTICATED", "Session is no longer valid");
+    return { actor: { sub: row.id, org_id: row.organizationId, role: row.role }, user: { id: row.id, email: row.email, displayName: row.displayName }, organization: { id: row.organizationId, name: row.organizationName } };
+  }
+
+  async listProjects(actor: Actor) {
+    const result = await this.pool.query(
+      `SELECT p.id, p.name, p.retention_policy AS "retentionPolicy", p.created_at AS "createdAt", COUNT(a.id)::int AS "analysisCount", MAX(a.created_at) AS "lastAnalysisAt"
+       FROM projects p JOIN memberships m ON m.organization_id = p.organization_id LEFT JOIN analysis_runs a ON a.project_id = p.id
+       WHERE p.organization_id = $1 AND m.user_id = $2 GROUP BY p.id ORDER BY MAX(a.created_at) DESC NULLS LAST, p.created_at DESC`,
+      [actor.org_id, actor.sub],
+    );
+    return result.rows;
+  }
+
+  async createProject(input: { name: string; retentionPolicy: string; actor: Actor }) {
+    const id = randomUUID();
+    const result = await this.pool.query(
+      `INSERT INTO projects (id, organization_id, name, retention_policy) VALUES ($1,$2,$3,$4)
+       RETURNING id, name, retention_policy AS "retentionPolicy", created_at AS "createdAt"`,
+      [id, input.actor.org_id, input.name, input.retentionPolicy],
+    );
+    const project = result.rows[0];
+    if (!project) throw new AppError(500, "PROJECT_CREATE_FAILED", "Unable to create project", false);
+    return { ...project, analysisCount: 0, lastAnalysisAt: null };
+  }
+
+  async renameProject(input: { projectId: string; name: string; actor: Actor }) {
+    const result = await this.pool.query(
+      `UPDATE projects p SET name = $3 FROM memberships m
+       WHERE p.id = $1 AND p.organization_id = $2 AND m.organization_id = p.organization_id AND m.user_id = $4
+       RETURNING p.id, p.name, p.retention_policy AS "retentionPolicy", p.created_at AS "createdAt"`,
+      [input.projectId, input.actor.org_id, input.name, input.actor.sub],
+    );
+    if (!result.rowCount) throw new AppError(404, "PROJECT_NOT_FOUND", "Project not found");
+    return result.rows[0];
+  }
+
+  async listProjectRuns(projectId: string, actor: Actor) {
+    await this.assertProjectMember(projectId, actor);
+    const result = await this.pool.query(
+      `SELECT a.id, a.status, a.created_at AS "createdAt", a.started_at AS "startedAt", a.completed_at AS "completedAt", a.failure_code AS "failureCode", LEFT(a.plan, 240) AS "planPreview", COUNT(r.id)::int AS "riskCount"
+       FROM analysis_runs a LEFT JOIN risk_items r ON r.analysis_run_id = a.id
+       WHERE a.project_id = $1 AND a.organization_id = $2 GROUP BY a.id ORDER BY a.created_at DESC LIMIT 30`,
+      [projectId, actor.org_id],
+    );
+    return result.rows;
+  }
 
   async assertProjectMember(projectId: string, actor: Actor) {
     const result = await this.pool.query(

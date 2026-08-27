@@ -6,6 +6,9 @@ const allowed = [
   /^v1\/risks\/[0-9a-f-]{36}\/mitigations$/i,
   /^v1\/risks\/[0-9a-f-]{36}\/actions$/i,
   /^v1\/actions\/[0-9a-f-]{36}\/verification$/i,
+  /^v1\/projects$/i,
+  /^v1\/projects\/[0-9a-f-]{36}$/i,
+  /^v1\/projects\/[0-9a-f-]{36}\/analyses$/i,
 ];
 
 async function forward(request: NextRequest, context: { params: Promise<{ path: string[] }> }) {
@@ -35,3 +38,4 @@ async function forward(request: NextRequest, context: { params: Promise<{ path: 
 
 export const GET = forward;
 export const POST = forward;
+export const PATCH = forward;

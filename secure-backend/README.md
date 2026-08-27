@@ -28,6 +28,8 @@ The local validation run completed an evidence-backed subscription-payment launc
 cp .env.example .env
 pnpm install
 psql "$DATABASE_URL" -f migrations/001_initial.sql
+psql "$DATABASE_URL" -f migrations/002_agentic_mvp.sql
+psql "$DATABASE_URL" -f migrations/003_self_service_product.sql
 pnpm dev               # terminal 1: API
 pnpm worker            # terminal 2: analysis worker
 ```
@@ -78,6 +80,10 @@ The summary includes the run ID, source counts by tier, risk titles/severity, fa
 
 ## Authentication contract
 
+For a self-hosted hackathon deployment, PreMortem includes a small server-side account bootstrap. `POST /v1/auth/register` creates an organization, administrator membership, and scrypt-hashed password record in one transaction; `POST /v1/auth/login` verifies the password and issues the same short-lived internal JWT described below. Both routes are rate-limited by IP and email, and request logging redacts password fields. The dashboard consumes these endpoints only through its own server routes, which place the JWT in an HTTP-only cookie; browser JavaScript never receives the token.
+
+> This bootstrap is suitable for the MVP. Before a public multi-tenant launch, replace or supplement it with verified email, password reset, MFA/SSO, organization selection for multi-organization users, and an approved identity provider.
+
 The API expects a verified HS256 JWT with these claims:
 
 ```json
@@ -109,6 +115,18 @@ Content-Type: application/json
 ```
 
 The API returns `202` with a run ID. Poll `GET /v1/analyses/:analysisId` until it reports `succeeded` or `failed`.
+
+### Projects and saved analysis history
+
+Authenticated users can create and rename only projects in their own organization, then list the most recent saved runs for a selected project. This supports dashboard reload and resume for a durable queued or running analysis.
+
+| Action | Route |
+|---|---|
+| Read current session | `GET /v1/session` |
+| List projects | `GET /v1/projects` |
+| Create project | `POST /v1/projects` |
+| Rename project | `PATCH /v1/projects/:projectId` |
+| List saved project analyses | `GET /v1/projects/:projectId/analyses` |
 
 ### Submit mitigation evidence
 

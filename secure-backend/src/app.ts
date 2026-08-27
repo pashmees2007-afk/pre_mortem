@@ -16,7 +16,7 @@ export function createApp(deps: Parameters<typeof createRouter>[0] & { config: C
   app.use((req, _res, next) => { req.requestId = req.header("x-request-id")?.slice(0, 128) || randomUUID(); next(); });
   app.use(helmet());
   app.use(express.json({ limit: "128kb", type: "application/json" }));
-  app.use(pinoHttp({ redact: ["req.headers.authorization", "req.body.plan", "req.body.answer"], customProps: (req: Request) => ({ requestId: req.requestId }) }));
+  app.use(pinoHttp({ redact: ["req.headers.authorization", "req.body.plan", "req.body.answer", "req.body.password"], customProps: (req: Request) => ({ requestId: req.requestId }) }));
   app.use(createRouter(deps));
   app.use((error: unknown, req: Request, res: Response, _next: NextFunction) => {
     const appError = error instanceof AppError

@@ -1,11 +1,13 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { AlertTriangle, ArrowRight, BadgeCheck, BookOpenText, CalendarDays, ChevronRight, CircleCheck, CircleDashed, ClipboardCheck, FileSearch, FlaskConical, Layers3, LoaderCircle, Network, RotateCcw, ShieldCheck, Sparkles, UserRoundCheck, Waypoints } from "lucide-react";
-import { approveMockAction, createAnalysis, getAnalysis, submitMitigation, verifyMockAction } from "@/lib/api";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { AlertTriangle, ArrowRight, BadgeCheck, BookOpenText, CalendarDays, ChevronRight, CircleCheck, CircleDashed, ClipboardCheck, FileSearch, FlaskConical, Layers3, LoaderCircle, LogOut, Network, RotateCcw, ShieldCheck, Sparkles, UserRoundCheck, Waypoints } from "lucide-react";
+import { approveMockAction, createAnalysis, createProject, getAnalysis, getSession, listProjectAnalyses, listProjects, renameProject, signOut, submitMitigation, verifyMockAction } from "@/lib/api";
 import { demoAnalysis, samplePlan } from "@/lib/demo";
 import { matrixStatus } from "@/lib/matrix";
-import type { AgentTraceEvent, Analysis, MockAction, Risk, Source } from "@/lib/contracts";
+import type { AgentTraceEvent, Analysis, AnalysisSummary, MockAction, ProductSession, Project, Risk, Source } from "@/lib/contracts";
+import { AccessPanel } from "@/components/AccessPanel";
+import { ProjectHub } from "@/components/ProjectHub";
 
 const nav = [
   [Layers3, "Analysis workspace", "#workspace"],
@@ -14,6 +16,7 @@ const nav = [
   [AlertTriangle, "Risk register", "#risks"],
   [ClipboardCheck, "Approval & action", "#actions"],
   [BookOpenText, "Evidence ledger", "#sources"],
+  [Waypoints, "How the agent works", "/agent-map"],
 ] as const;
 
 function severityClass(severity: number) {
@@ -38,7 +41,14 @@ function traceTone(status: AgentTraceEvent["status"]) {
 }
 
 export default function DashboardPage() {
-  const [projectId, setProjectId] = useState("00000000-0000-4000-8000-000000000000");
+  const [session, setSession] = useState<ProductSession | null>(null);
+  const [authLoading, setAuthLoading] = useState(true);
+  const [guestDemo, setGuestDemo] = useState(false);
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [projectId, setProjectId] = useState("");
+  const [history, setHistory] = useState<AnalysisSummary[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [resumedRunId, setResumedRunId] = useState<string | null>(null);
   const [plan, setPlan] = useState(samplePlan);
   const [analysis, setAnalysis] = useState<Analysis>(demoAnalysis);
   const [isDemo, setIsDemo] = useState(true);
@@ -59,24 +69,67 @@ export default function DashboardPage() {
   const matrix = matrixStatus(analysis);
   const sourceMap = useMemo(() => new Map(analysis.sources.map((source) => [source.id, source])), [analysis.sources]);
 
+  const refreshHistory = useCallback(async (id: string) => {
+    if (!id) return;
+    setHistoryLoading(true);
+    try { setHistory(await listProjectAnalyses(id)); }
+    catch (reason) { setError(reason instanceof Error ? reason.message : "Saved analyses could not be loaded."); }
+    finally { setHistoryLoading(false); }
+  }, []);
+
+  const refreshProjects = useCallback(async () => {
+    const available = await listProjects();
+    setProjects(available);
+    setProjectId((current) => available.some((project) => project.id === current) ? current : (available[0]?.id ?? ""));
+    return available;
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    void (async () => {
+      try { const current = await getSession(); if (active) setSession(current); }
+      catch { if (active) setSession(null); }
+      finally { if (active) setAuthLoading(false); }
+    })();
+    return () => { active = false; };
+  }, []);
+
+  useEffect(() => {
+    if (!session) return;
+    void refreshProjects().catch((reason) => setError(reason instanceof Error ? reason.message : "Projects could not be loaded."));
+  }, [session, refreshProjects]);
+
+  useEffect(() => { if (session && projectId) void refreshHistory(projectId); }, [session, projectId, refreshHistory]);
+
+  useEffect(() => {
+    const activeRun = history.find((run) => run.status === "queued" || run.status === "running");
+    if (activeRun && activeRun.id !== resumedRunId) {
+      setResumedRunId(activeRun.id);
+      setFeedback("Resumed the saved analysis that was still running.");
+      void openSavedRun(activeRun);
+    }
+  }, [history, resumedRunId]);
+
   async function poll(runId: string) {
-    for (let attempt = 0; attempt < 20; attempt += 1) {
+    for (let attempt = 0; attempt < 300; attempt += 1) {
       const latest = await getAnalysis(runId);
       setAnalysis(latest);
-      if (latest.status === "succeeded" || latest.status === "failed") return latest;
+      if (latest.status === "succeeded" || latest.status === "failed") { if (projectId) void refreshHistory(projectId); return latest; }
       await delay(1_750);
     }
-    throw new Error("The analysis is still running. Refresh this workspace to continue polling.");
+    throw new Error("This analysis is still running. It is saved in your project history and will resume when you reopen it.");
   }
 
   async function runAnalysis() {
     setError(null);
     setFeedback(null);
+    if (!session || !projectId) { setError("Create or select a project before starting an analysis."); return; }
     setRunning(true);
     try {
       const created = await createAnalysis({ projectId, plan, idempotencyKey: crypto.randomUUID() });
-      const latest = await poll(created.id);
       setIsDemo(false);
+      setAnalysis({ id: created.id, status: "queued", sources: [], branches: [], risks: [], disagreement: null, investigationPlan: null, critic: null, trace: [], actions: [] });
+      const latest = await poll(created.id);
       setSelectedRiskId(latest.risks[0]?.id ?? "");
       if (latest.status === "failed") setError("The secure backend could not complete this run. No unsupported evidence has been shown.");
     } catch (reason) {
@@ -93,6 +146,54 @@ export default function DashboardPage() {
     setError(null);
     setFeedback("Loaded the example evidence dossier. It is illustrative; live runs use your secure backend.");
   }
+
+  async function createManagedProject(name: string) {
+    try {
+      const project = await createProject({ name });
+      await refreshProjects();
+      setProjectId(project.id);
+      setHistory([]);
+      setResumedRunId(null);
+      setIsDemo(false);
+      setFeedback(`Created ${project.name}. Add a plan when you are ready to start a review.`);
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "Project could not be created."); }
+  }
+
+  async function renameManagedProject(name: string) {
+    if (!projectId) return;
+    try {
+      const project = await renameProject(projectId, name);
+      await refreshProjects();
+      setFeedback(`Renamed project to ${project.name}.`);
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "Project could not be renamed."); }
+  }
+
+  function selectManagedProject(id: string) {
+    setHistory([]);
+    setResumedRunId(null);
+    setProjectId(id);
+  }
+
+  async function openSavedRun(run: AnalysisSummary) {
+    setError(null);
+    setRunning(run.status === "queued" || run.status === "running");
+    try {
+      const latest = await getAnalysis(run.id);
+      setAnalysis(latest);
+      setIsDemo(false);
+      setSelectedRiskId(latest.risks[0]?.id ?? "");
+      if (latest.status === "queued" || latest.status === "running") await poll(run.id);
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "Saved analysis could not be resumed."); }
+    finally { setRunning(false); }
+  }
+
+  async function leaveWorkspace() {
+    await signOut().catch(() => undefined);
+    setSession(null); setProjects([]); setProjectId(""); setHistory([]); setGuestDemo(false); setIsDemo(true); setAnalysis(demoAnalysis);
+  }
+
+  if (authLoading) return <main className="access-shell"><div className="access-card card loading-card"><LoaderCircle className="spin" size={18} /> Checking secure workspace access…</div></main>;
+  if (!session && !guestDemo) return <AccessPanel onAuthenticated={() => { setAuthLoading(true); void getSession().then((current) => setSession(current)).catch(() => setSession(null)).finally(() => setAuthLoading(false)); }} onViewDemo={() => setGuestDemo(true)} />;
 
   async function assessMitigation() {
     if (!selectedRisk || mitigationAnswer.trim().length < 8) return;
@@ -167,7 +268,7 @@ export default function DashboardPage() {
         <nav className="nav" aria-label="Workspace sections">
           {nav.map(([Icon, label, href], index) => <a key={label} className={index === 0 ? "active" : ""} href={href}><Icon size={15} />{label}</a>)}
         </nav>
-        <div className="side-note"><span className="kicker">Decision support</span><br />Risk findings are evidence-linked hypotheses, not project predictions.</div>
+        <div className="side-note"><span className="kicker">Decision support</span><br />Risk findings are evidence-linked hypotheses, not project predictions.{session && <button className="signout" type="button" onClick={leaveWorkspace}><LogOut size={13} /> Sign out</button>}</div>
       </aside>
 
       <main className="main">
@@ -175,16 +276,16 @@ export default function DashboardPage() {
         <h1>Find the failure path<br /><em>before</em> you ship it.</h1>
         <p className="lede">A legible pre-mortem that keeps research, independent failure narratives, disagreement, and mitigations in one decision record.</p>
 
+        {session ? <ProjectHub session={session} projects={projects} projectId={projectId} history={history} loading={historyLoading} onSelect={selectManagedProject} onCreate={createManagedProject} onRename={renameManagedProject} onOpenRun={openSavedRun} /> : <div className="guest-banner"><span><Sparkles size={15} /> Illustrative dossier only</span><button type="button" className="text-action" onClick={() => setGuestDemo(false)}>Sign in to run your own review <ArrowRight size={14} /></button></div>}
+
         <section id="workspace" className="workspace" aria-labelledby="intake-title">
           <div className="card intake">
-            <label className="label" htmlFor="project">Project identifier <span className="hint">(required by the secure API)</span></label>
-            <input id="project" className="textarea" style={{ minHeight: 0, height: 42, resize: "none" }} value={projectId} onChange={(event) => setProjectId(event.target.value)} aria-label="Project identifier" />
             <label id="intake-title" className="label" htmlFor="plan" style={{ marginTop: 15 }}>Sprint plan or PRD</label>
             <textarea id="plan" className="textarea" value={plan} onChange={(event) => setPlan(event.target.value)} />
             <div className="actions">
-              <button className="button primary" onClick={runAnalysis} disabled={running || plan.trim().length < 80}>{running ? <><LoaderCircle size={14} className="spin" /> Analysing</> : <><FileSearch size={14} /> Start secure analysis</>}</button>
+              <button className="button primary" onClick={runAnalysis} disabled={running || plan.trim().length < 80 || !session || !projectId}>{running ? <><LoaderCircle size={14} className="spin" /> Analysing</> : <><FileSearch size={14} /> Start secure analysis</>}</button>
               <button className="button quiet" onClick={openDemo}><Sparkles size={14} /> View example dossier</button>
-              <span className="hint">The browser sends only your plan and project ID. Prompts, source policy, and scoring stay server-owned.</span>
+              <span className="hint">{session ? "The browser sends only your plan and selected project. Prompts, source policy, and scoring stay server-owned." : "Sign in and create a project to run your own secure analysis."}</span>
             </div>
           </div>
           <aside className="card principles" aria-label="Trust properties">

@@ -10,6 +10,31 @@ export const MitigationInput = z.object({
   answer: z.string().trim().min(8).max(4_000),
 }).strict();
 
+const Email = z.string().trim().email().max(254).transform((value) => value.toLowerCase());
+const Password = z.string().min(12).max(200)
+  .refine((value) => /[a-z]/i.test(value) && /\d/.test(value), "Password must include letters and numbers");
+
+export const RegisterInput = z.object({
+  organizationName: z.string().trim().min(2).max(120),
+  displayName: z.string().trim().min(2).max(120),
+  email: Email,
+  password: Password,
+}).strict();
+
+export const LoginInput = z.object({
+  email: Email,
+  password: z.string().min(1).max(200),
+}).strict();
+
+export const CreateProjectInput = z.object({
+  name: z.string().trim().min(2).max(160),
+  retentionPolicy: z.enum(["standard", "restricted"]).default("standard"),
+}).strict();
+
+export const UpdateProjectInput = z.object({
+  name: z.string().trim().min(2).max(160),
+}).strict();
+
 export const RiskCategory = z.enum([
   "scope_control",
   "requirements_quality",

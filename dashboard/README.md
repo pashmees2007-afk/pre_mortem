@@ -4,7 +4,7 @@ This package is the React/Next.js decision-support interface for the secure Pre-
 
 ## Security model
 
-The browser never receives a Groq key, backend URL, bearer token, server prompt, source-policy setting, or model configuration. Client code calls only the same-origin `/api/backend/*` route. That route reads an HTTP-only access-token cookie on the server, allowlists only the three required backend API shapes, and forwards the token to the secure backend.
+The browser never receives a Groq key, backend URL, bearer token, server prompt, source-policy setting, or model configuration. Client code calls only the same-origin `/api/backend/*` route. That route reads an HTTP-only access-token cookie on the server, allowlists the needed analysis, project, and history API shapes, and forwards the token to the secure backend.
 
 > Do not replace the route handler with a client-side `NEXT_PUBLIC_*` backend URL or store the bearer token in local storage. Doing either would weaken the server-owned trust boundary established by the backend package.
 
@@ -35,7 +35,7 @@ The initial screen uses a clearly labeled illustrative evidence dossier so the v
 | `PREMORTEM_API_URL` | HTTPS base URL of the secure Node.js backend, such as `https://api.your-domain.example`. It remains server-only. |
 | `PREMORTEM_ACCESS_COOKIE` | HTTP-only cookie name containing a short-lived JWT accepted by the backend. Defaults to `pm_access_token`. |
 
-The trusted authentication callback must set the access cookie after sign-in. It must include the `sub`, `org_id`, and `role` claims expected by the backend package. The dashboard does not issue, decode, or persist this token in browser JavaScript.
+The dashboard now includes server-side sign-in, registration, session, and logout routes. They relay credentials to the secure backend and set or clear an HTTP-only cookie; browser JavaScript never receives, decodes, or persists the JWT. The token includes the `sub`, `org_id`, and `role` claims expected by the backend package.
 
 ## Secure backend endpoints consumed
 
@@ -44,12 +44,14 @@ The trusted authentication callback must set the access cookie after sign-in. It
 | Start analysis | `POST /api/backend/v1/analyses` | `POST /v1/analyses` |
 | Poll analysis | `GET /api/backend/v1/analyses/:id` | `GET /v1/analyses/:id` |
 | Assess mitigation | `POST /api/backend/v1/risks/:id/mitigations` | `POST /v1/risks/:id/mitigations` |
+| Create/select/rename project | `/api/backend/v1/projects` | `GET`/`POST /v1/projects`, `PATCH /v1/projects/:id` |
+| Load saved run history | `/api/backend/v1/projects/:id/analyses` | `GET /v1/projects/:id/analyses` |
 
 The proxy route rejects every other backend path. It does not permit generic agent calls, user-selected model settings, prompt bodies, token limits, source objects, or severity values.
 
 ## UX structure
 
-The dashboard has four linked decision areas. The intake card submits only project data and plan text. The disagreement matrix places independent branches side-by-side and shows the deterministic display status, category relationship, and evidence overlap. The risk register exposes severity, uncertainty, source links, and a selected-risk mitigation panel. Finally, the evidence ledger preserves the source record used by each branch rather than presenting invented citations.
+The dashboard starts with sign-in or workspace creation, then provides project creation, selection, and renaming instead of exposing raw UUIDs. The workspace persists up to 30 runs per project, automatically detects a saved queued/running run after reload, and resumes polling for up to roughly nine minutes. The intake card submits only plan text and the server-owned selected project. The disagreement matrix places independent branches side-by-side and shows the deterministic display status, category relationship, and evidence overlap. The risk register exposes severity, uncertainty, source links, and a selected-risk mitigation panel. Finally, the evidence ledger preserves the source record used by each branch rather than presenting invented citations.
 
 ## Production notes
 

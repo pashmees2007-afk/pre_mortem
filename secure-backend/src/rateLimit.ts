@@ -34,3 +34,23 @@ export function analysisRateLimit(redis: RateLimitRedis, config: Config) {
     }
   };
 }
+
+export function authRateLimit(redis: RateLimitRedis) {
+  return async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const email = typeof req.body?.email === "string" ? req.body.email.toLowerCase().slice(0, 254) : "unknown";
+      const bucket = `rate:auth:${req.ip}:${email}`;
+      const [count, ttl] = await redis.eval(INCREMENT_WITH_EXPIRY, 1, bucket, "600") as [number, number];
+      res.setHeader("RateLimit-Limit", "8");
+      res.setHeader("RateLimit-Remaining", String(Math.max(0, 8 - count)));
+      res.setHeader("RateLimit-Reset", String(Math.max(0, ttl)));
+      if (count > 8) {
+        res.setHeader("Retry-After", String(Math.max(1, ttl)));
+        throw new AppError(429, "AUTH_RATE_LIMITED", "Too many sign-in attempts; retry later");
+      }
+      next();
+    } catch (error) {
+      next(error);
+    }
+  };
+}

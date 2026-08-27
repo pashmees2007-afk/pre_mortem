@@ -1,16 +1,57 @@
 import { Router } from "express";
+import { z } from "zod";
 import type { Config } from "./config.js";
-import { CreateAnalysisInput, MitigationInput, MockActionInput, VerificationInput } from "./contracts.js";
+import { CreateAnalysisInput, CreateProjectInput, LoginInput, MitigationInput, MockActionInput, RegisterInput, UpdateProjectInput, VerificationInput } from "./contracts.js";
 import type { PreMortemEngine } from "./engine.js";
 import { AppError } from "./errors.js";
-import { requireUser } from "./identity.js";
+import { issueAccessToken, requireUser } from "./identity.js";
 import type { AnalysisQueue } from "./queue.js";
-import { analysisRateLimit } from "./rateLimit.js";
+import { analysisRateLimit, authRateLimit } from "./rateLimit.js";
 import type { Repository } from "./repository.js";
 
 export function createRouter(args: { config: Config; repo: Repository; queue: AnalysisQueue; engine: PreMortemEngine; redis: Parameters<typeof analysisRateLimit>[0] }) {
   const router = Router();
   const auth = requireUser(args.config);
+
+  router.post("/v1/auth/register", authRateLimit(args.redis), async (req, res, next) => {
+    try {
+      const session = await args.repo.registerAccount(RegisterInput.parse(req.body));
+      res.status(201).json({ accessToken: await issueAccessToken(args.config, session.actor), user: session.user, organization: session.organization });
+    } catch (error) { next(error); }
+  });
+
+  router.post("/v1/auth/login", authRateLimit(args.redis), async (req, res, next) => {
+    try {
+      const session = await args.repo.authenticateAccount(LoginInput.parse(req.body));
+      res.json({ accessToken: await issueAccessToken(args.config, session.actor), user: session.user, organization: session.organization });
+    } catch (error) { next(error); }
+  });
+
+  router.get("/v1/session", auth, async (req, res, next) => {
+    try { res.json(await args.repo.getSession(req.actor!)); } catch (error) { next(error); }
+  });
+
+  router.get("/v1/projects", auth, async (req, res, next) => {
+    try { res.json({ projects: await args.repo.listProjects(req.actor!) }); } catch (error) { next(error); }
+  });
+
+  router.post("/v1/projects", auth, async (req, res, next) => {
+    try { res.status(201).json(await args.repo.createProject({ ...CreateProjectInput.parse(req.body), actor: req.actor! })); } catch (error) { next(error); }
+  });
+
+  router.patch("/v1/projects/:projectId", auth, async (req, res, next) => {
+    try {
+      const projectId = z.string().uuid().parse(req.params.projectId);
+      res.json(await args.repo.renameProject({ projectId, ...UpdateProjectInput.parse(req.body), actor: req.actor! }));
+    } catch (error) { next(error); }
+  });
+
+  router.get("/v1/projects/:projectId/analyses", auth, async (req, res, next) => {
+    try {
+      const projectId = z.string().uuid().parse(req.params.projectId);
+      res.json({ analyses: await args.repo.listProjectRuns(projectId, req.actor!) });
+    } catch (error) { next(error); }
+  });
 
   router.post("/v1/analyses", auth, analysisRateLimit(args.redis, args.config), async (req, res, next) => {
     try {

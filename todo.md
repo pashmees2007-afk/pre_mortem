@@ -158,4 +158,16 @@
 - [x] Run one new live fintech analysis and confirm every Qwen stage completes without fallback. Run `f507abdd-833f-4cdd-983c-537f6ca808d9` completed with ten retained sources, nine Tier-1 sources, and no fallback metadata.
 - [x] Parse both millisecond and decimal-second Groq retry hints before the next live validation attempt.
 - [x] Inspect the shipped dashboard and backend feature inventory, then list the remaining MVP and production features precisely. The interactive Agent Map works on desktop and mobile; dashboard checks/build pass, but the map is a separate explanatory site and the product dashboard lacks account/project onboarding, durable run-history recovery, and approved external action integrations.
-- [ ] Commit and push the final reliability and status-audit changes.
+- [x] Commit and push the final reliability and status-audit changes.
+
+## Connected Self-Service Product
+
+- [x] Add a normal user sign-in and first-project onboarding flow without exposing agent credentials to the browser.
+- [x] Add create, select, and manage project workflows so users do not enter raw project UUIDs.
+- [x] Add durable analysis history, saved active runs, progress display, and resume-after-refresh behavior.
+- [x] Connect the Agent Map’s primary actions to the product dashboard journey.
+- [x] Validate the connected user journey without changing the evidence, human-approval, or mock-action safeguards.
+
+### Validation notes
+
+- Local endpoint checks passed for account registration, HTTP-only session cookie issuance, authenticated project creation, project listing, and project-scoped history retrieval. Browser checks also passed for workspace registration, managed project creation, the dashboard Agent Map route, and return navigation to the live workspace.

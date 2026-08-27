@@ -10,6 +10,7 @@ const organizationId = "22222222-2222-4222-8222-222222222222";
 const projectId = "33333333-3333-4333-8333-333333333333";
 const analysisId = "44444444-4444-4444-8444-444444444444";
 const riskId = "55555555-5555-4555-8555-555555555555";
+const account = { actor: { sub: userId, org_id: organizationId, role: "admin" as const }, user: { id: userId, email: "owner@example.test", displayName: "Project Owner" }, organization: { id: organizationId, name: "Example Workspace" } };
 
 const config: Config = {
   NODE_ENV: "test", PORT: 3000, DATABASE_URL: "postgres://localhost/test", REDIS_URL: "redis://localhost:6379",
@@ -32,6 +33,13 @@ const plan = "Launch an OAuth partner integration in two weeks with a dependency
 
 function harness(rateResult: [number, number] = [1, 60]) {
   const repo = {
+    registerAccount: vi.fn().mockResolvedValue(account),
+    authenticateAccount: vi.fn().mockResolvedValue(account),
+    getSession: vi.fn().mockResolvedValue(account),
+    listProjects: vi.fn().mockResolvedValue([{ id: projectId, name: "Launch readiness", retentionPolicy: "standard", analysisCount: 1, lastAnalysisAt: null }]),
+    createProject: vi.fn().mockResolvedValue({ id: projectId, name: "Launch readiness", retentionPolicy: "standard", analysisCount: 0, lastAnalysisAt: null }),
+    renameProject: vi.fn().mockResolvedValue({ id: projectId, name: "Updated readiness", retentionPolicy: "standard" }),
+    listProjectRuns: vi.fn().mockResolvedValue([{ id: analysisId, status: "running", planPreview: "Launch readiness plan", riskCount: 0 }]),
     assertProjectMember: vi.fn().mockResolvedValue(undefined),
     createOrReuseRun: vi.fn().mockResolvedValue({ id: analysisId, status: "queued" }),
     getAnalysis: vi.fn().mockResolvedValue({ id: analysisId, status: "succeeded" }),
@@ -49,6 +57,25 @@ function harness(rateResult: [number, number] = [1, 60]) {
 }
 
 describe("secure public API", () => {
+  it("creates a protected session for a new workspace without returning a password", async () => {
+    const { app, repo } = harness();
+    const response = await request(app).post("/v1/auth/register").send({ organizationName: "Example Workspace", displayName: "Project Owner", email: "owner@example.test", password: "SufficientPassword123" }).expect(201);
+    expect(response.body.user.email).toBe("owner@example.test");
+    expect(response.body.accessToken).toEqual(expect.any(String));
+    expect(JSON.stringify(response.body)).not.toContain("SufficientPassword123");
+    expect(repo.registerAccount).toHaveBeenCalledWith(expect.objectContaining({ email: "owner@example.test" }));
+  });
+
+  it("lists authenticated projects and their durable analysis history", async () => {
+    const { app, repo } = harness();
+    const auth = { authorization: `Bearer ${await token()}` };
+    const projects = await request(app).get("/v1/projects").set(auth).expect(200);
+    expect(projects.body.projects[0].id).toBe(projectId);
+    const history = await request(app).get(`/v1/projects/${projectId}/analyses`).set(auth).expect(200);
+    expect(history.body.analyses[0]).toMatchObject({ id: analysisId, status: "running" });
+    expect(repo.listProjectRuns).toHaveBeenCalledWith(projectId, expect.objectContaining({ sub: userId }));
+  });
+
   it("requires a valid user token before an analysis is created", async () => {
     const { app, repo } = harness();
     await request(app).post("/v1/analyses").send({ projectId, plan, idempotencyKey: crypto.randomUUID() }).expect(401);

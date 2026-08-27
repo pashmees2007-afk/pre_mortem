@@ -86,6 +86,21 @@ export const analysisSchema = z.object({
   actions: z.array(actionSchema).default([]),
 });
 
+export const sessionSchema = z.object({
+  actor: z.object({ sub: z.string().uuid(), org_id: z.string().uuid(), role: z.enum(["member", "admin"]) }),
+  user: z.object({ id: z.string().uuid(), email: z.string().email(), displayName: z.string().nullable() }),
+  organization: z.object({ id: z.string().uuid(), name: z.string() }),
+});
+
+export const projectSchema = z.object({
+  id: z.string().uuid(), name: z.string(), retentionPolicy: z.string(), createdAt: z.string(),
+  analysisCount: z.number().int().nonnegative().optional().default(0), lastAnalysisAt: z.string().nullable().optional().default(null),
+});
+
+export const analysisSummarySchema = z.object({
+  id: z.string().uuid(), status: z.enum(["queued", "running", "succeeded", "failed"]), createdAt: z.string(), startedAt: z.string().nullable().optional(), completedAt: z.string().nullable().optional(), failureCode: z.string().nullable().optional(), planPreview: z.string(), riskCount: z.number().int().nonnegative(),
+});
+
 export type Analysis = z.infer<typeof analysisSchema>;
 export type Risk = z.infer<typeof riskSchema>;
 export type Source = z.infer<typeof sourceSchema>;
@@ -95,3 +110,6 @@ export type MitigationResponse = {
   assessment: { evidence: "verified" | "partial" | "unverified" | "absent"; rationale: string; gaps: string[] };
   before: number; after: number; delta: number; rationale: string;
 };
+export type ProductSession = z.infer<typeof sessionSchema>;
+export type Project = z.infer<typeof projectSchema>;
+export type AnalysisSummary = z.infer<typeof analysisSummarySchema>;

@@ -1,5 +1,5 @@
 import type { NextFunction, Request, Response } from "express";
-import { jwtVerify } from "jose";
+import { jwtVerify, SignJWT } from "jose";
 import { z } from "zod";
 import type { Config } from "./config.js";
 import { AppError } from "./errors.js";
@@ -11,6 +11,18 @@ const ClaimsSchema = z.object({
 }).passthrough();
 
 export type Actor = z.infer<typeof ClaimsSchema>;
+
+export async function issueAccessToken(config: Config, actor: Actor) {
+  const secret = new TextEncoder().encode(config.JWT_SECRET);
+  return new SignJWT({ org_id: actor.org_id, role: actor.role })
+    .setProtectedHeader({ alg: "HS256" })
+    .setSubject(actor.sub)
+    .setIssuer(config.JWT_ISSUER)
+    .setAudience(config.JWT_AUDIENCE)
+    .setIssuedAt()
+    .setExpirationTime("8h")
+    .sign(secret);
+}
 
 declare global {
   namespace Express {
