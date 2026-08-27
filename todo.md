@@ -128,3 +128,9 @@
 - [x] Review ignore rules and reachable Git history for accidental secret tracking.
 - [x] Run dependency vulnerability checks and review the server-side security boundary.
 - [x] Remediate verified dashboard dependency issues, validate the fix, and document credential rotation plus GitHub alert coverage required.
+
+## Replacement-Key End-to-End Test
+
+- [x] Run one fresh full PreMortem pipeline using the verified replacement Groq key.
+- [x] Inspect the full agent trace, retained evidence, and final risk register. The run retained 16 Tier-1 sources and generated three severity-5 operational-readiness risks.
+- [x] Confirm that the provider returned no quota, rate-limit, or access error.
