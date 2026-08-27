@@ -121,3 +121,10 @@
 - [x] Add a reusable full-pipeline submission and inspection mode using the configured local environment.
 - [x] Document safe usage with `GROQ_API_KEY` supplied only through the local shell or ignored environment file.
 - [x] Validate the runner and execute a full analysis with the working replacement key. Qwen typed output and Compound Mini retrieval both passed; the run completed with 12 sources, including 9 Tier-1 sources.
+
+## Repository Security Audit
+
+- [x] Scan tracked files and every reachable commit for credential-shaped strings without exposing their values.
+- [x] Review ignore rules and reachable Git history for accidental secret tracking.
+- [x] Run dependency vulnerability checks and review the server-side security boundary.
+- [x] Remediate verified dashboard dependency issues, validate the fix, and document credential rotation plus GitHub alert coverage required.
