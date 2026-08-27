@@ -12,6 +12,7 @@ import {
 } from "./contracts.js";
 import { retrieveEvidence } from "./evidence.js";
 import { AppError } from "./errors.js";
+import { GeminiClient } from "./gemini.js";
 import { GroqClient } from "./groq.js";
 import { SYSTEM, dataBlock } from "./prompts.js";
 import { type Repository } from "./repository.js";
@@ -45,10 +46,14 @@ function deDuplicateAcrossBranches(left: EvidenceSource[], right: EvidenceSource
   return { left, right: normalizedRight, stored };
 }
 
+const GROQ_EVIDENCE_COOLDOWN_MS = 62_000;
+const pause = (milliseconds: number) => new Promise<void>((resolve) => setTimeout(resolve, milliseconds));
+
 export class PreMortemEngine {
   constructor(
     private readonly repo: Repository,
     private readonly groq: GroqClient,
+    private readonly structured: GeminiClient,
     private readonly config: Config,
   ) {}
 
@@ -57,7 +62,7 @@ export class PreMortemEngine {
     if (!run) return; // A duplicate queue delivery or previously processed idempotency key.
     try {
       await this.repo.clearTransientArtifacts(run.id);
-      const facts = await this.groq.strictJson({
+      const facts = await this.structured.strictJson({
         name: "plan_facts",
         schema: (await import("./contracts.js")).jsonSchemas.planFacts,
         output: PlanFactsSchema,
@@ -75,7 +80,7 @@ export class PreMortemEngine {
         detail: "Extracted the project outcome, timeline, team, dependencies, technical changes, and missing controls.",
       });
 
-      const investigationPlan = await this.groq.strictJson({
+      const investigationPlan = await this.structured.strictJson({
         name: "investigation_plan",
         schema: (await import("./contracts.js")).jsonSchemas.investigationPlan,
         output: InvestigationPlanSchema,
@@ -94,10 +99,32 @@ export class PreMortemEngine {
         metadata: { angles: investigationPlan.angles, queries: investigationPlan.researchQueries },
       });
 
-      const [evidenceA, evidenceB] = await Promise.all([
-        retrieveEvidence({ client: this.groq, facts, branch: "A", actorId: run.requestedBy, plannedQuery: investigationPlan.researchQueries.A }),
-        retrieveEvidence({ client: this.groq, facts, branch: "B", actorId: run.requestedBy, plannedQuery: investigationPlan.researchQueries.B }),
-      ]);
+      // Compound Mini's free-tier backing model has an 8K TPM quota. A pair of concurrent
+      // searches can reserve more than that together, so these independent branches are
+      // deliberately staged. They remain independent; only provider scheduling is serialized.
+      const evidenceA = await retrieveEvidence({
+        client: this.groq, facts, branch: "A", actorId: run.requestedBy, plannedQuery: investigationPlan.researchQueries.A,
+      });
+      await this.repo.recordTrace({
+        runId: run.id,
+        skill: "Research Skill A",
+        stage: "retrieve_and_check_sources",
+        status: "completed",
+        detail: `Retrieved and retained ${evidenceA.length} HTTPS evidence records for the first independent research angle.`,
+        metadata: { branch: "A", retained: evidenceA.length },
+      });
+      await pause(this.config.NODE_ENV === "test" ? 0 : GROQ_EVIDENCE_COOLDOWN_MS);
+      const evidenceB = await retrieveEvidence({
+        client: this.groq, facts, branch: "B", actorId: run.requestedBy, plannedQuery: investigationPlan.researchQueries.B,
+      });
+      await this.repo.recordTrace({
+        runId: run.id,
+        skill: "Research Skill B",
+        stage: "retrieve_and_check_sources",
+        status: "completed",
+        detail: `Retrieved and retained ${evidenceB.length} HTTPS evidence records for the second independent research angle.`,
+        metadata: { branch: "B", retained: evidenceB.length },
+      });
       if (evidenceA.length < 2 || evidenceB.length < 2) {
         throw new AppError(502, "EVIDENCE_INSUFFICIENT", "Enough verifiable evidence could not be retrieved for independent analysis");
       }
@@ -117,7 +144,7 @@ export class PreMortemEngine {
         this.createScenario(run.plan, facts, sources.left, "A", run.requestedBy),
         this.createScenario(run.plan, facts, sources.right, "B", run.requestedBy),
       ]);
-      const semantic = await this.groq.strictJson({
+      const semantic = await this.structured.strictJson({
         name: "scenario_comparison",
         schema: (await import("./contracts.js")).jsonSchemas.comparator,
         output: ComparatorSchema,
@@ -145,7 +172,7 @@ export class PreMortemEngine {
       });
 
       const allowedEvidence = sources.stored.filter((source) => source.status === "retrieved" && source.sourceTier < 4);
-      const critic = await this.groq.strictJson({
+      const critic = await this.structured.strictJson({
         name: "evidence_critic",
         schema: (await import("./contracts.js")).jsonSchemas.critic,
         output: CriticSchema,
@@ -170,7 +197,7 @@ export class PreMortemEngine {
         detail: critic.finding,
         metadata: { evidenceGaps: critic.evidenceGaps, nextCheck: critic.nextCheck },
       });
-      const synthesis = await this.groq.strictJson({
+      const synthesis = await this.structured.strictJson({
         name: "risk_synthesis",
         schema: (await import("./contracts.js")).jsonSchemas.synthesis,
         output: SynthesisSchema,
@@ -201,7 +228,7 @@ export class PreMortemEngine {
   }
 
   private async createScenario(plan: string, facts: unknown, evidence: EvidenceSource[], branch: "A" | "B", actorId: string) {
-    const scenario = await this.groq.strictJson({
+    const scenario = await this.structured.strictJson({
       name: `scenario_${branch.toLowerCase()}`,
       schema: (await import("./contracts.js")).jsonSchemas.scenario,
       output: ScenarioSchema,
@@ -216,7 +243,7 @@ export class PreMortemEngine {
 
   async assessMitigation(args: { riskId: string; actor: { sub: string; org_id: string; role: "member" | "admin" }; answer: string }) {
     const risk = await this.repo.getRiskForActor(args.riskId, args.actor);
-    const assessment = await this.groq.strictJson({
+    const assessment = await this.structured.strictJson({
       name: "control_assessment",
       schema: (await import("./contracts.js")).jsonSchemas.controlAssessment,
       output: ControlAssessmentSchema,

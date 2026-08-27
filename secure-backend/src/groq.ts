@@ -15,7 +15,12 @@ export class GroqClient {
     try {
       response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
         method: "POST",
-        headers: { authorization: `Bearer ${this.config.GROQ_API_KEY}`, "content-type": "application/json" },
+        headers: {
+          authorization: `Bearer ${this.config.GROQ_API_KEY}`,
+          "content-type": "application/json",
+          // Basic search avoids enabling newer Compound tools the evidence pipeline does not use.
+          "Groq-Model-Version": "2025-07-23",
+        },
         body: JSON.stringify(body),
         signal: AbortSignal.timeout(this.config.ANALYSIS_TIMEOUT_MS),
       });
@@ -65,8 +70,11 @@ export class GroqClient {
       model: this.config.GROQ_RETRIEVAL_MODEL,
       temperature: 0,
       max_completion_tokens: 450,
+      // Compound Mini can otherwise reserve a large default completion budget before tool use.
+      max_tokens: 450,
       user: args.actorId,
       search_settings: args.includeDomains?.length ? { include_domains: args.includeDomains } : undefined,
+      compound_custom: { tools: { enabled_tools: ["web_search"] } },
       messages: [{ role: "user", content: `Find software-engineering failure precedents for this bounded research query. Return concise source-grounded findings. QUERY: ${args.query}` }] satisfies GroqMessage[],
     });
   }

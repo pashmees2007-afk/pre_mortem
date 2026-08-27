@@ -10,7 +10,11 @@ Every provider call has a server-defined prompt, bounded timeout, fixed model po
 
 ## Runtime requirements
 
-Use Node.js 20.11 or later, PostgreSQL 15 or later, Redis 7 or later, and a Groq account. This package uses PostgreSQL for tenant data/auditability and Redis/BullMQ for durable work dispatch.
+Use Node.js 20.11 or later, PostgreSQL 15 or later, Redis 7 or later, a Gemini API key, and a Groq API key. This package uses PostgreSQL for tenant data/auditability and Redis/BullMQ for durable work dispatch.
+
+> **Provider boundary:** Gemini (`gemini-3.6-flash` by default) performs every schema-constrained reasoning task: plan normalization, investigation planning, independent scenarios, comparison, evidence critique, risk synthesis, and mitigation assessment. Groq Compound Mini is restricted to source retrieval through its built-in web-search response. No provider key or model policy is exposed to the dashboard.
+
+The free-tier path stages the two independent Groq evidence searches rather than sending them together, uses Groq basic web search only, and retries short Gemini quota windows. This intentionally trades a little latency for a more reliable, no-cost hackathon demo. A Gemini quota is still enforced per project/model; wait for the provider reset if it reports an exhausted daily limit.
 
 ```bash
 cp .env.example .env
@@ -19,6 +23,22 @@ psql "$DATABASE_URL" -f migrations/001_initial.sql
 pnpm dev               # terminal 1: API
 pnpm worker            # terminal 2: analysis worker
 ```
+
+### Local-only token helper
+
+For a development-only authenticated smoke test, use the helper with local seed or test identities supplied through environment variables. It refuses to run in production and never embeds an identity or secret in source code.
+
+```bash
+DEV_ORG_ID="organization UUID" \
+DEV_USER_ID="user UUID" \
+DEV_ROLE="admin" \
+JWT_SECRET="local development secret" \
+JWT_ISSUER="premortem-api" \
+JWT_AUDIENCE="premortem-web" \
+node scripts/issue-local-token.mjs
+```
+
+Copy the resulting 10-minute token only into a local shell command or HTTP-only development cookie. Do not commit it, put it in a browser bundle, or use the helper in a deployed environment.
 
 Run the validation suite with:
 

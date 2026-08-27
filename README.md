@@ -23,7 +23,9 @@ The Agentic MVP adds an inspectable closed loop: **understand the plan → choos
 
 ## Security boundary
 
-The browser is intentionally not a generic LLM client. The dashboard submits only project data, plan text, mitigation answers, approval details, and verification notes to fixed secure routes. The backend keeps the Groq key, server prompts, model selection, source policy, queue controls, and deterministic scoring logic on the server.
+The browser is intentionally not a generic LLM client. The dashboard submits only project data, plan text, mitigation answers, approval details, and verification notes to fixed secure routes. The backend keeps all provider keys, server prompts, model selection, source policy, queue controls, and deterministic scoring logic on the server.
+
+The production reasoning path uses **Google Gemini `gemini-3.6-flash`** with JSON Schema output for typed plan facts, planning, scenarios, comparison, critique, synthesis, and mitigation assessment. **Groq Compound Mini** remains limited to web-evidence retrieval because the research skill relies on its structured search-tool response. Both keys are server-only and must never be committed or exposed to the dashboard.
 
 The mock action board deliberately **does not** write to Jira, GitHub, or another external project system. It is a safe demo of agent task execution with a human approval gate. A future integration should retain the approval record and add a separate, narrowly scoped connector for each external action.
 
