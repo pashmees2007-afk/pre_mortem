@@ -23,11 +23,13 @@ describe("GroqClient structured reasoning", () => {
     expect(result).toEqual({ outcome: "Ship integration", dependencies: ["gateway"] });
     expect(fetchMock).toHaveBeenCalledWith("https://api.groq.com/openai/v1/chat/completions", expect.objectContaining({ method: "POST" }));
     expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toMatchObject({ model: "qwen/qwen3.8-27b", response_format: { type: "json_schema", json_schema: { schema } } });
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body)).messages[0].content).toContain("OUTPUT CONTRACT");
   });
 
   it("rejects malformed structured data before it reaches the agent workflow", async () => {
     vi.spyOn(globalThis, "fetch")
       .mockResolvedValueOnce(new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ outcome: "Missing dependency list" }) } }] }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ outcome: "Still missing dependency list" }) } }] }), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ outcome: "Still missing dependency list" }) } }] }), { status: 200 }));
     await expect(new GroqClient(config).strictJson({ name: "plan_facts", schema, output: Output, system: "system", user: "plan", actorId: "actor" })).rejects.toThrow("invalid result shape");
   });

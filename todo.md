@@ -99,3 +99,18 @@
 - [x] Preserve Groq Compound Mini solely for the web-evidence subskill.
 - [x] Update tests, environment documentation, and provider-boundary documentation.
 - [x] Run automated checks and a live PreMortem task, then commit and push the working migration.
+
+## Fresh Provider-Limit Pipeline Check
+
+- [x] Submit one new realistic project plan through the full Groq Qwen and Compound Mini pipeline.
+- [x] Inspect the complete agent trace and the final evidence-linked risk output.
+- [x] Confirm that the successful run returned no provider rate-limit or quota signal.
+
+## Qwen Reliability and Tier-1 Evidence Hardening
+
+- [x] Capture and classify the malformed Qwen output patterns in short typed stages.
+- [x] Strengthen Qwen prompts and structured-output recovery without allowing invented claims or citations.
+- [x] Make each evidence branch seek and retain Tier-1 engineering sources where available.
+- [x] Update tests and the critic rule. The focused suite now has 25 passing tests.
+- [ ] Repeat the final full pipeline check after the external Groq provider access block (`403 Forbidden`) clears. Earlier Tier-1-first live validation retained five Tier-1 sources, but the final repeat was blocked before plan processing.
+- [ ] Commit and push the validated reliability improvements.

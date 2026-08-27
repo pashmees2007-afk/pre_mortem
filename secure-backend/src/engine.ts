@@ -63,8 +63,9 @@ function fallbackComparison(a: Scenario, b: Scenario) {
 }
 
 function fallbackCritic(args: { plan: InvestigationPlan; comparison: Comparison; evidence: EvidenceSource[] }): CriticFinding {
-  const evidenceGaps = args.evidence.every((source) => source.sourceTier > 1)
-    ? ["The current source set contains no tier-one engineering guidance."]
+  const missingTrustedBranches = (["A", "B"] as const).filter((branch) => !args.evidence.some((source) => source.branch === branch && source.sourceTier === 1));
+  const evidenceGaps = missingTrustedBranches.length
+    ? missingTrustedBranches.map((branch) => `Research branch ${branch} retained no tier-one engineering guidance.`)
     : args.comparison.evidenceOverlap >= 0.5
       ? ["The branches share substantial evidence and need an additional independent check."]
       : [];
