@@ -55,6 +55,27 @@ pnpm check
 pnpm test
 ```
 
+### Replacement Groq key verification runner
+
+Use this **local-only** runner after creating a replacement Groq key. It validates Qwen typed JSON and Compound Mini web-search access without printing the API key. It uses the same backend client, model policy, validation, and evidence logic as the production workflow.
+
+```bash
+export GROQ_API_KEY="new key in your local shell only"
+export DATABASE_URL="postgres://..."
+export REDIS_URL="redis://..."
+export JWT_SECRET="local development secret with at least 32 characters"
+export JWT_ISSUER="premortem-api"
+export JWT_AUDIENCE="premortem-web"
+export DEV_ORG_ID="organization UUID"
+export DEV_USER_ID="user UUID"
+export DEV_PROJECT_ID="project UUID"
+
+pnpm verify:groq            # verifies Qwen and Compound Mini only
+pnpm verify:groq -- --full  # submits a fresh full local analysis and prints a safe summary
+```
+
+The summary includes the run ID, source counts by tier, risk titles/severity, fallback stages, and agent trace. It never prints `GROQ_API_KEY`. The runner refuses to execute with `NODE_ENV=production`; use an ignored local environment file or your shell, never Git.
+
 ## Authentication contract
 
 The API expects a verified HS256 JWT with these claims:

@@ -13,7 +13,8 @@
     "build": "tsc -p tsconfig.json",
     "test": "vitest run",
     "test:watch": "vitest",
-    "check": "tsc --noEmit"
+    "check": "tsc --noEmit",
+    "verify:groq": "pnpm build && node scripts/verify-groq-pipeline.mjs"
   },
   "dependencies": {
     "bullmq": "^5.58.0",

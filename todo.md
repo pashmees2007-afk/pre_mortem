@@ -114,3 +114,10 @@
 - [x] Update tests and the critic rule. The focused suite now has 25 passing tests.
 - [ ] Repeat the final full pipeline check after the external Groq provider access block (`403 Forbidden`) clears. Earlier Tier-1-first live validation retained five Tier-1 sources, but the final repeat was blocked before plan processing.
 - [ ] Commit and push the validated reliability improvements.
+
+## New Groq Key Verification Runner
+
+- [x] Create a local-only runner that verifies both Qwen reasoning and Compound Mini retrieval access without printing the API key.
+- [x] Add a reusable full-pipeline submission and inspection mode using the configured local environment.
+- [x] Document safe usage with `GROQ_API_KEY` supplied only through the local shell or ignored environment file.
+- [ ] Validate the runner and execute a full analysis once a working new key is configured.
