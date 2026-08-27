@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { createContainer } from "../dist/container.js";
+import { GroqClient } from "../dist/groq.js";
 
 if (process.env.NODE_ENV === "production") throw new Error("This local-only runner must not run in production");
 
@@ -34,7 +35,8 @@ if (plan.length < 80) throw new Error("PREMORTEM_TEST_PLAN must contain at least
 let container;
 try {
   container = createContainer();
-  const { config, groq, repo, queue } = container;
+  const { config, repo } = container;
+  const groq = new GroqClient(config);
 
   await groq.strictJson({
     name: "qwen_key_probe",
@@ -105,4 +107,6 @@ try {
     await container.redis.quit().catch(() => undefined);
     await container.pool.end().catch(() => undefined);
   }
+  // This is a local CLI, not a long-running server. Do not leave queue handles open after a probe.
+  process.exit(process.exitCode ?? 0);
 }

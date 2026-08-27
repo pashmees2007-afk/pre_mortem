@@ -120,4 +120,4 @@
 - [x] Create a local-only runner that verifies both Qwen reasoning and Compound Mini retrieval access without printing the API key.
 - [x] Add a reusable full-pipeline submission and inspection mode using the configured local environment.
 - [x] Document safe usage with `GROQ_API_KEY` supplied only through the local shell or ignored environment file.
-- [ ] Validate the runner and execute a full analysis once a working new key is configured.
+- [ ] Validate the runner and execute a full analysis once a working new key is configured. The supplied replacement key reached Groq but was rejected with `403 Forbidden` during the Qwen probe.
