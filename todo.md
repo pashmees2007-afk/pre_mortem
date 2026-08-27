@@ -181,3 +181,7 @@
 - [x] Apply the standalone Agent Map’s case-file visual language and guided workflow to the real dashboard landing and workspace journey.
 - [x] Keep the secure Next.js dashboard as the single live-product surface so account sessions, project history, and analysis actions remain server-protected.
 - [x] Retain the standalone map only as an architecture explainer until a public production dashboard URL is configured.
+
+## Current Code Guide
+
+- [x] Create a concise current structure and code-flow guide for the unified PreMortem dashboard, secure backend, and data store.
