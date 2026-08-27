@@ -71,3 +71,10 @@
 - [x] Run dashboard checks, 4 tests, and production compilation after the provider migration.
 - [x] Confirm a live run completes both independently staged Groq evidence branches and persists their inspectable trace.
 - [ ] Complete one full live run after the Gemini free-tier request quota resets. The provider currently returns `RESOURCE_EXHAUSTED` after 20 requests for this model/project; the code now retries short quota windows, but it must not conceal a provider-enforced daily limit.
+
+## Gemini Free-Tier Request Budget
+
+- [x] Audit the full-analysis call count and identify any workflow retry that repeats completed work.
+- [x] Keep a single full analysis under a documented 14-request Gemini budget below the provider cap.
+- [x] Replace whole-job provider retries with a retry policy that preserves completed work.
+- [x] Add tests and documentation for the request-budget safeguard, then commit the change.

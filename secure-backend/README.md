@@ -14,7 +14,7 @@ Use Node.js 20.11 or later, PostgreSQL 15 or later, Redis 7 or later, a Gemini A
 
 > **Provider boundary:** Gemini (`gemini-3.6-flash` by default) performs every schema-constrained reasoning task: plan normalization, investigation planning, independent scenarios, comparison, evidence critique, risk synthesis, and mitigation assessment. Groq Compound Mini is restricted to source retrieval through its built-in web-search response. No provider key or model policy is exposed to the dashboard.
 
-The free-tier path stages the two independent Groq evidence searches rather than sending them together, uses Groq basic web search only, and retries short Gemini quota windows. This intentionally trades a little latency for a more reliable, no-cost hackathon demo. A Gemini quota is still enforced per project/model; wait for the provider reset if it reports an exhausted daily limit.
+The free-tier path stages the two independent Groq evidence searches rather than sending them together, uses Groq basic web search only, and retries a short Gemini quota window at the individual-call level. A full analysis has seven structured Gemini stages, with at most one retry each, so it makes no more than **14 Gemini requests**. The queue never restarts the full job after a provider failure, preventing completed stages from being duplicated. This intentionally trades a little latency for a more reliable, no-cost hackathon demo. A Gemini quota is still enforced per project/model; wait for the provider reset if it reports an exhausted daily limit.
 
 ```bash
 cp .env.example .env

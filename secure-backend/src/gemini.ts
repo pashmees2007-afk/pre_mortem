@@ -13,6 +13,11 @@ function retryDelayMs(message: string) {
 }
 
 const pause = (milliseconds: number) => new Promise<void>((resolve) => setTimeout(resolve, milliseconds));
+const MAX_ATTEMPTS_PER_STRUCTURED_CALL = 2;
+
+function isDailyQuotaExhausted(message: string) {
+  return /perday|per day|daily limit/i.test(message);
+}
 
 /** Server-only structured reasoning client. Research remains on Groq because it needs its search-tool response. */
 export class GeminiClient {
@@ -27,7 +32,7 @@ export class GeminiClient {
     actorId: string;
     maxCompletionTokens?: number;
   }) {
-    for (let attempt = 0; attempt < 3; attempt += 1) {
+    for (let attempt = 0; attempt < MAX_ATTEMPTS_PER_STRUCTURED_CALL; attempt += 1) {
       let response: Response;
       try {
         response = await fetch(
@@ -56,7 +61,10 @@ export class GeminiClient {
       const payload = await response.json().catch(() => null) as GeminiResponse | null;
       if (!response.ok) {
         const message = payload?.error?.message || "The structured reasoning provider rejected the request";
-        if (response.status === 429 && attempt < 2) {
+        // Do not waste another request on the provider's per-day ceiling. A short
+        // rate window can recover once; seven workflow stages therefore use at most
+        // 14 Gemini requests in a full analysis.
+        if (response.status === 429 && !isDailyQuotaExhausted(message) && attempt < MAX_ATTEMPTS_PER_STRUCTURED_CALL - 1) {
           await pause(this.config.NODE_ENV === "test" ? 0 : retryDelayMs(message));
           continue;
         }

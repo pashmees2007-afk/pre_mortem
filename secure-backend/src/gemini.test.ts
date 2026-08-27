@@ -44,4 +44,13 @@ describe("GeminiClient", () => {
       .resolves.toEqual({ outcome: "Ship integration", dependencies: ["gateway"] });
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
+
+  it("does not retry a Gemini daily-quota response", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({
+      error: { message: "Quota exceeded for metric: generate_content_free_tier_requests per day." },
+    }), { status: 429 }));
+    await expect(new GeminiClient(config).strictJson({ name: "plan_facts", schema, output: Output, system: "system", user: "plan", actorId: "actor" }))
+      .rejects.toThrow("per day");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
 });

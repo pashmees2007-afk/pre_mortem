@@ -13,8 +13,9 @@ export function createAnalysisQueue(redis: QueueRedis) {
     async enqueue(analysisRunId: string) {
       await queue.add("run-analysis", { analysisRunId }, {
         jobId: analysisRunId,
-        attempts: 2,
-        backoff: { type: "exponential", delay: 10_000 },
+        // Provider calls have a narrow, call-level retry. Retrying the whole job would
+        // duplicate completed Gemini stages and can exceed its 20-request free quota.
+        attempts: 1,
         removeOnComplete: 200,
         removeOnFail: 500,
       });
