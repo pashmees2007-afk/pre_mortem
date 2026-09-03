@@ -41,20 +41,24 @@
 - [x] Verify the recommended NIM model’s current availability and structured-generation compatibility.
 - [x] Prepare the key-generation and first-call steps.
 
-## NVIDIA NIM Integration
+## NVIDIA NIM Integration (superseded)
 
-- [ ] Validate the NVIDIA NIM key with the PreMortem plan-facts JSON schema.
-- [ ] Add server-only NVIDIA provider configuration and a typed structured-output client.
-- [ ] Preserve Groq only for evidence retrieval while moving typed reasoning to NIM.
-- [ ] Run tests, test a live analysis, and commit the provider integration.
+**Abandoned.** The provider search continued past NIM to Gemini and then to Groq Qwen, which is the current production reasoning path (see `README.md` and `secure-backend/src/groq.ts`). No NIM client was ever added to the codebase. Leaving these unchecked as a record; no further action.
 
-## Cerebras Provider Migration
+- [ ] ~~Validate the NVIDIA NIM key with the PreMortem plan-facts JSON schema.~~
+- [ ] ~~Add server-only NVIDIA provider configuration and a typed structured-output client.~~
+- [ ] ~~Preserve Groq only for evidence retrieval while moving typed reasoning to NIM.~~
+- [ ] ~~Run tests, test a live analysis, and commit the provider integration.~~
+
+## Cerebras Provider Migration (superseded)
+
+**Abandoned.** The supplied Cerebras key returned HTTP 402 (billing not activated) and the search moved on to Gemini, then Groq Qwen, which is now in production. No Cerebras client was ever added to the codebase. Leaving these unchecked as a record; no further action.
 
 - [x] Obtain a server-side Cerebras API key from the user.
-- [ ] Activate the Cerebras Free Trial or credits after the supplied key returned HTTP 402.
-- [ ] Validate `gpt-oss-120b` with the existing plan-facts schema using strict JSON output.
-- [ ] Add the typed Cerebras structured-output client and hybrid provider wiring.
-- [ ] Run tests, validate a live analysis, and commit the migration.
+- [ ] ~~Activate the Cerebras Free Trial or credits after the supplied key returned HTTP 402.~~
+- [ ] ~~Validate `gpt-oss-120b` with the existing plan-facts schema using strict JSON output.~~
+- [ ] ~~Add the typed Cerebras structured-output client and hybrid provider wiring.~~
+- [ ] ~~Run tests, validate a live analysis, and commit the migration.~~
 
 ## Replacement Provider Evaluation
 
