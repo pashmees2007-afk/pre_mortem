@@ -116,7 +116,7 @@
 - [x] Strengthen Qwen prompts and structured-output recovery without allowing invented claims or citations.
 - [x] Make each evidence branch seek and retain Tier-1 engineering sources where available.
 - [x] Update tests and the critic rule. The focused suite now has 25 passing tests.
-- [ ] Repeat the final full pipeline check after the external Groq provider access block (`403 Forbidden`) clears. Earlier Tier-1-first live validation retained five Tier-1 sources, but the final repeat was blocked before plan processing.
+- [ ] Repeat the final full pipeline check after the external Groq provider access block (`403 Forbidden`) clears. Earlier Tier-1-first live validation retained five Tier-1 sources, but the final repeat was blocked before plan processing. **2026-09-03 finding:** attempted this re-check from the Claude Code remote sandbox with a freshly supplied Groq key. The request never reached Groq — the sandbox's own egress proxy rejects `CONNECT api.groq.com:443` with a `403` at the organization-policy level (confirmed via the proxy's own `/__agentproxy/status`, which lists `api.groq.com:443` under `recentRelayFailures` as `connect_rejected`). This is a property of this remote execution environment, not evidence about Groq-side access. The freshly supplied key itself was never actually validated against Groq's API and should be rotated since it was shared in chat regardless. Re-run this check from an environment whose network policy allows `api.groq.com`.
 - [x] Commit and push the validated reliability improvements. Landed in `b8cf014` (`fix: harden compact qwen analysis stages`), already on `origin/main`.
 
 ## New Groq Key Verification Runner
