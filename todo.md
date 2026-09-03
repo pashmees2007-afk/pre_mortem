@@ -113,7 +113,7 @@
 - [x] Make each evidence branch seek and retain Tier-1 engineering sources where available.
 - [x] Update tests and the critic rule. The focused suite now has 25 passing tests.
 - [ ] Repeat the final full pipeline check after the external Groq provider access block (`403 Forbidden`) clears. Earlier Tier-1-first live validation retained five Tier-1 sources, but the final repeat was blocked before plan processing.
-- [ ] Commit and push the validated reliability improvements.
+- [x] Commit and push the validated reliability improvements. Landed in `b8cf014` (`fix: harden compact qwen analysis stages`), already on `origin/main`.
 
 ## New Groq Key Verification Runner
 
@@ -149,7 +149,7 @@
 - [x] Run a fresh comparative pipeline and record which, if any, stages still require fallback. The live fintech run completed with 13 sources; only the risk-synthesis stage required its existing transparent fallback.
 - [x] Capture the updated live comparator and critic trace metadata, confirming their `fallback` flags are false.
 - [x] Pace the live Qwen stages and cap their evidence cards so the on-demand 8,000 TPM limit does not interrupt scenario generation.
-- [ ] Commit and push the validated reliability improvement.
+- [x] Commit and push the validated reliability improvement. Landed in `8afc80d` (`fix: pace qwen analysis requests`), already on `origin/main`.
 
 ## Final Synthesis and MVP Audit
 
