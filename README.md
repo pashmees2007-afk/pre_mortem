@@ -35,7 +35,7 @@ The Next.js dashboard forwards requests through a narrow same-origin route using
 
 Start the secure backend and queue worker first, then configure and run the dashboard in a second terminal. Each package includes its own `.env.example`, dependency lockfile, test suite, and detailed operating documentation.
 
-Apply both backend migrations in order: `001_initial.sql`, then `002_agentic_mvp.sql`.
+Apply the backend migrations in order: `001_initial.sql`, `002_agentic_mvp.sql`, `003_self_service_product.sql`, then `004_password_reset.sql`.
 
 ```bash
 cd secure-backend

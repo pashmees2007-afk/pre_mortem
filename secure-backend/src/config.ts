@@ -16,6 +16,10 @@ const EnvSchema = z.object({
   MAX_PLAN_CHARS: z.coerce.number().int().min(500).max(30_000).default(12_000),
   ANALYSIS_RATE_LIMIT: z.coerce.number().int().min(1).max(100).default(3),
   ANALYSIS_RATE_WINDOW_SECONDS: z.coerce.number().int().min(60).max(86_400).default(600),
+  // Password-reset email delivery is optional. Without a provider key, links are logged server-side only (dev mode).
+  RESEND_API_KEY: z.string().min(10).optional(),
+  MAIL_FROM: z.string().min(3).optional(),
+  APP_BASE_URL: z.string().url().optional(),
 });
 
 export type Config = z.infer<typeof EnvSchema>;

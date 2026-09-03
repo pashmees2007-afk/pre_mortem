@@ -3,6 +3,7 @@ import request from "supertest";
 import { describe, expect, it, vi } from "vitest";
 import { createApp } from "./app.js";
 import type { Config } from "./config.js";
+import { AppError } from "./errors.js";
 import { Repository } from "./repository.js";
 
 const userId = "11111111-1111-4111-8111-111111111111";
@@ -43,6 +44,8 @@ function harness(rateResult: [number, number] = [1, 60]) {
     assertProjectMember: vi.fn().mockResolvedValue(undefined),
     createOrReuseRun: vi.fn().mockResolvedValue({ id: analysisId, status: "queued" }),
     getAnalysis: vi.fn().mockResolvedValue({ id: analysisId, status: "succeeded" }),
+    createPasswordResetToken: vi.fn().mockResolvedValue({ userId, email: "owner@example.test", token: "a-generated-reset-token-value" }),
+    confirmPasswordReset: vi.fn().mockResolvedValue(undefined),
   };
   const queue = { enqueue: vi.fn().mockResolvedValue(undefined), close: vi.fn() };
   const engine = {
@@ -52,8 +55,9 @@ function harness(rateResult: [number, number] = [1, 60]) {
     }),
   };
   const redis = { eval: vi.fn().mockResolvedValue(rateResult) };
-  const app = createApp({ config, repo: repo as any, queue: queue as any, engine: engine as any, redis: redis as any });
-  return { app, repo, queue, engine, redis };
+  const mailer = { send: vi.fn().mockResolvedValue(undefined) };
+  const app = createApp({ config, repo: repo as any, queue: queue as any, engine: engine as any, redis: redis as any, mailer: mailer as any });
+  return { app, repo, queue, engine, redis, mailer };
 }
 
 describe("secure public API", () => {
@@ -112,6 +116,37 @@ describe("secure public API", () => {
     expect(response.body.before).toBe(4);
     expect(response.body.after).toBe(3);
     expect(engine.assessMitigation).toHaveBeenCalledWith(expect.objectContaining({ riskId, answer: expect.stringContaining("release owner") }));
+  });
+
+  it("sends a reset email through the mailer when the account exists, without ever returning the token", async () => {
+    const { app, repo, mailer } = harness();
+    const response = await request(app).post("/v1/auth/password-reset/request").send({ email: "owner@example.test" }).expect(202);
+    expect(response.body).toEqual({ ok: true });
+    expect(JSON.stringify(response.body)).not.toContain("a-generated-reset-token-value");
+    expect(repo.createPasswordResetToken).toHaveBeenCalledWith("owner@example.test");
+    expect(mailer.send).toHaveBeenCalledWith(expect.objectContaining({ to: "owner@example.test", text: expect.stringContaining("a-generated-reset-token-value") }));
+  });
+
+  it("gives the same response for an email with no account, so the route cannot be used to enumerate accounts", async () => {
+    const { app, repo, mailer } = harness();
+    repo.createPasswordResetToken.mockResolvedValueOnce(null);
+    const response = await request(app).post("/v1/auth/password-reset/request").send({ email: "nobody@example.test" }).expect(202);
+    expect(response.body).toEqual({ ok: true });
+    expect(mailer.send).not.toHaveBeenCalled();
+  });
+
+  it("resets the password through a confirm token and never echoes the new password back", async () => {
+    const { app, repo } = harness();
+    const response = await request(app).post("/v1/auth/password-reset/confirm").send({ token: "a-generated-reset-token-value", password: "BrandNewPassword123" }).expect(200);
+    expect(response.body).toEqual({ ok: true });
+    expect(JSON.stringify(response.body)).not.toContain("BrandNewPassword123");
+    expect(repo.confirmPasswordReset).toHaveBeenCalledWith("a-generated-reset-token-value", "BrandNewPassword123");
+  });
+
+  it("rejects an invalid or expired reset token with 400", async () => {
+    const { app, repo } = harness();
+    repo.confirmPasswordReset.mockRejectedValueOnce(new AppError(400, "INVALID_RESET_TOKEN", "This reset link is invalid or has expired"));
+    await request(app).post("/v1/auth/password-reset/confirm").send({ token: "not-real", password: "BrandNewPassword123" }).expect(400);
   });
 });
 

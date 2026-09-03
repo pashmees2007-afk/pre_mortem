@@ -8,6 +8,7 @@ import { matrixStatus } from "@/lib/matrix";
 import type { AgentTraceEvent, Analysis, AnalysisSummary, MockAction, ProductSession, Project, Risk, Source } from "@/lib/contracts";
 import { AccessPanel } from "@/components/AccessPanel";
 import { ProjectHub } from "@/components/ProjectHub";
+import { ResetPasswordPanel } from "@/components/ResetPasswordPanel";
 
 const nav = [
   [Layers3, "Analysis workspace", "#workspace"],
@@ -72,6 +73,17 @@ export default function DashboardPage() {
   const [verifyingAction, setVerifyingAction] = useState(false);
   const [feedback, setFeedback] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [resetToken, setResetToken] = useState<string | null>(null);
+
+  useEffect(() => {
+    const token = new URLSearchParams(window.location.search).get("resetToken");
+    if (token) setResetToken(token);
+  }, []);
+
+  function clearResetToken() {
+    setResetToken(null);
+    window.history.replaceState(null, "", window.location.pathname);
+  }
 
   const selectedRisk = analysis.risks.find((risk) => risk.id === selectedRiskId) ?? analysis.risks[0];
   const matrix = matrixStatus(analysis);
@@ -200,6 +212,7 @@ export default function DashboardPage() {
     setSession(null); setProjects([]); setProjectId(""); setHistory([]); setGuestDemo(false); setIsDemo(true); setAnalysis(demoAnalysis);
   }
 
+  if (resetToken) return <ResetPasswordPanel token={resetToken} onDone={clearResetToken} />;
   if (authLoading) return <main className="access-shell"><div className="access-card card loading-card"><LoaderCircle className="spin" size={18} /> Checking secure workspace access…</div></main>;
   if (!session && !guestDemo) return <AccessPanel onAuthenticated={() => { setAuthLoading(true); void getSession().then((current) => setSession(current)).catch(() => setSession(null)).finally(() => setAuthLoading(false)); }} onViewDemo={() => setGuestDemo(true)} />;
 

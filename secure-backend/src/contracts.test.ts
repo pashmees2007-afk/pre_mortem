@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { CreateAnalysisInput, MitigationInput, MockActionInput, VerificationInput } from "./contracts.js";
+import { CreateAnalysisInput, MitigationInput, MockActionInput, PasswordResetConfirmInput, PasswordResetRequestInput, VerificationInput } from "./contracts.js";
 
 const valid = {
   projectId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
@@ -34,5 +34,16 @@ describe("browser request contracts", () => {
   it("accepts only a verified or failed action outcome with an evidence note", () => {
     expect(VerificationInput.parse({ outcome: "verified", note: "The gateway canary ran in staging and the rollback condition was checked." }).outcome).toBe("verified");
     expect(() => VerificationInput.parse({ outcome: "ignored", note: "no" })).toThrow();
+  });
+
+  it("lowercases the email for a password-reset request and rejects a malformed one", () => {
+    expect(PasswordResetRequestInput.parse({ email: "Owner@Example.TEST" }).email).toBe("owner@example.test");
+    expect(() => PasswordResetRequestInput.parse({ email: "not-an-email" })).toThrow();
+  });
+
+  it("requires a bounded token and a strong new password to confirm a reset", () => {
+    expect(PasswordResetConfirmInput.parse({ token: "a".repeat(32), password: "BrandNewPassword123" }).token).toHaveLength(32);
+    expect(() => PasswordResetConfirmInput.parse({ token: "short", password: "BrandNewPassword123" })).toThrow();
+    expect(() => PasswordResetConfirmInput.parse({ token: "a".repeat(32), password: "alllowercase" })).toThrow();
   });
 });

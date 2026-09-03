@@ -1,15 +1,16 @@
 import { Router } from "express";
 import { z } from "zod";
 import type { Config } from "./config.js";
-import { CreateAnalysisInput, CreateProjectInput, LoginInput, MitigationInput, MockActionInput, RegisterInput, UpdateProjectInput, VerificationInput } from "./contracts.js";
+import { CreateAnalysisInput, CreateProjectInput, LoginInput, MitigationInput, MockActionInput, PasswordResetConfirmInput, PasswordResetRequestInput, RegisterInput, UpdateProjectInput, VerificationInput } from "./contracts.js";
 import type { PreMortemEngine } from "./engine.js";
 import { AppError } from "./errors.js";
 import { issueAccessToken, requireUser } from "./identity.js";
+import type { Mailer } from "./mailer.js";
 import type { AnalysisQueue } from "./queue.js";
 import { analysisRateLimit, authRateLimit } from "./rateLimit.js";
 import type { Repository } from "./repository.js";
 
-export function createRouter(args: { config: Config; repo: Repository; queue: AnalysisQueue; engine: PreMortemEngine; redis: Parameters<typeof analysisRateLimit>[0] }) {
+export function createRouter(args: { config: Config; repo: Repository; queue: AnalysisQueue; engine: PreMortemEngine; redis: Parameters<typeof analysisRateLimit>[0]; mailer?: Mailer }) {
   const router = Router();
   const auth = requireUser(args.config);
 
@@ -24,6 +25,32 @@ export function createRouter(args: { config: Config; repo: Repository; queue: An
     try {
       const session = await args.repo.authenticateAccount(LoginInput.parse(req.body));
       res.json({ accessToken: await issueAccessToken(args.config, session.actor), user: session.user, organization: session.organization });
+    } catch (error) { next(error); }
+  });
+
+  router.post("/v1/auth/password-reset/request", authRateLimit(args.redis), async (req, res, next) => {
+    try {
+      const input = PasswordResetRequestInput.parse(req.body);
+      const created = await args.repo.createPasswordResetToken(input.email);
+      if (created && args.mailer) {
+        const base = (args.config.APP_BASE_URL ?? "http://localhost:3100").replace(/\/$/, "");
+        const resetUrl = `${base}/?resetToken=${encodeURIComponent(created.token)}`;
+        await args.mailer.send({
+          to: created.email,
+          subject: "Reset your PreMortem password",
+          text: `Use this link to reset your PreMortem password. It expires in 30 minutes and can only be used once.\n\n${resetUrl}\n\nIf you did not request this, you can safely ignore this email.`,
+        });
+      }
+      // Always the same response whether or not the email exists, so this endpoint cannot be used to enumerate accounts.
+      res.status(202).json({ ok: true });
+    } catch (error) { next(error); }
+  });
+
+  router.post("/v1/auth/password-reset/confirm", authRateLimit(args.redis), async (req, res, next) => {
+    try {
+      const input = PasswordResetConfirmInput.parse(req.body);
+      await args.repo.confirmPasswordReset(input.token, input.password);
+      res.json({ ok: true });
     } catch (error) { next(error); }
   });
 

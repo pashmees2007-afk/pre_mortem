@@ -30,6 +30,7 @@ pnpm install
 psql "$DATABASE_URL" -f migrations/001_initial.sql
 psql "$DATABASE_URL" -f migrations/002_agentic_mvp.sql
 psql "$DATABASE_URL" -f migrations/003_self_service_product.sql
+psql "$DATABASE_URL" -f migrations/004_password_reset.sql
 pnpm dev               # terminal 1: API
 pnpm worker            # terminal 2: analysis worker
 ```
@@ -82,7 +83,13 @@ The summary includes the run ID, source counts by tier, risk titles/severity, fa
 
 For a self-hosted hackathon deployment, PreMortem includes a small server-side account bootstrap. `POST /v1/auth/register` creates an organization, administrator membership, and scrypt-hashed password record in one transaction; `POST /v1/auth/login` verifies the password and issues the same short-lived internal JWT described below. Both routes are rate-limited by IP and email, and request logging redacts password fields. The dashboard consumes these endpoints only through its own server routes, which place the JWT in an HTTP-only cookie; browser JavaScript never receives the token.
 
-> This bootstrap is suitable for the MVP. Before a public multi-tenant launch, replace or supplement it with verified email, password reset, MFA/SSO, organization selection for multi-organization users, and an approved identity provider.
+> This bootstrap is suitable for the MVP. Before a public multi-tenant launch, replace or supplement it with verified email, MFA/SSO, organization selection for multi-organization users, and an approved identity provider.
+
+### Password reset
+
+`POST /v1/auth/password-reset/request` accepts `{ "email": "..." }` and always returns `202 { "ok": true }`, whether or not an account exists for that email, so the route cannot be used to enumerate accounts. When the account exists, a single-use token valid for 30 minutes is stored (hashed, never in plaintext) and emailed through the configured `Mailer` (`src/mailer.ts`). `POST /v1/auth/password-reset/confirm` accepts `{ "token": "...", "password": "..." }`, validates the token against the same plan-facts-grade Zod password policy used at registration, and invalidates every outstanding token for that user once one is consumed.
+
+Without `RESEND_API_KEY` configured, the mailer falls back to logging the reset link to the server console only — useful for local development, never expose this fallback in a production deployment. Swap `createMailer` in `src/mailer.ts` for any other HTTPS transactional email API; the `Mailer` interface is a single `send({ to, subject, text })` method.
 
 The API expects a verified HS256 JWT with these claims:
 

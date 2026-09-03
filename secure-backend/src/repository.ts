@@ -1,4 +1,4 @@
-import { randomBytes, randomUUID, scrypt as scryptCallback, timingSafeEqual } from "node:crypto";
+import { createHash, randomBytes, randomUUID, scrypt as scryptCallback, timingSafeEqual } from "node:crypto";
 import { promisify } from "node:util";
 import type { Pool, PoolClient } from "pg";
 import type { Actor } from "./identity.js";
@@ -54,6 +54,10 @@ async function verifyPassword(password: string, stored: string) {
   return expected.length === actual.length && timingSafeEqual(expected, actual);
 }
 
+function hashResetToken(token: string) {
+  return createHash("sha256").update(token).digest("hex");
+}
+
 export class Repository {
   constructor(private readonly pool: Pool) {}
 
@@ -97,6 +101,35 @@ export class Repository {
       user: { id: row.id, email: row.email, displayName: row.displayName },
       organization: { id: row.organizationId, name: row.organizationName },
     };
+  }
+
+  async createPasswordResetToken(email: string): Promise<{ userId: string; email: string; token: string } | null> {
+    const result = await this.pool.query<{ id: string; email: string }>(
+      `SELECT id, email FROM users WHERE lower(email) = lower($1) LIMIT 1`, [email],
+    );
+    const row = result.rows[0];
+    if (!row || !row.email) return null;
+    const token = randomBytes(32).toString("base64url");
+    await this.pool.query(
+      `INSERT INTO password_reset_tokens (id, user_id, token_hash, expires_at) VALUES ($1,$2,$3, NOW() + INTERVAL '30 minutes')`,
+      [randomUUID(), row.id, hashResetToken(token)],
+    );
+    return { userId: row.id, email: row.email, token };
+  }
+
+  async confirmPasswordReset(token: string, newPassword: string): Promise<void> {
+    const tokenHash = hashResetToken(token);
+    const passwordHash = await hashPassword(newPassword);
+    await transaction(this.pool, async (client) => {
+      const result = await client.query<{ id: string; userId: string }>(
+        `SELECT id, user_id AS "userId" FROM password_reset_tokens WHERE token_hash = $1 AND used_at IS NULL AND expires_at > NOW() LIMIT 1`,
+        [tokenHash],
+      );
+      const row = result.rows[0];
+      if (!row) throw new AppError(400, "INVALID_RESET_TOKEN", "This reset link is invalid or has expired");
+      await client.query(`UPDATE user_credentials SET password_hash = $2, updated_at = NOW() WHERE user_id = $1`, [row.userId, passwordHash]);
+      await client.query(`UPDATE password_reset_tokens SET used_at = NOW() WHERE user_id = $1 AND used_at IS NULL`, [row.userId]);
+    });
   }
 
   async getSession(actor: Actor): Promise<ProductSession> {

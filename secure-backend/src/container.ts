@@ -3,6 +3,7 @@ import { loadConfig } from "./config.js";
 import { createPool } from "./db.js";
 import { PreMortemEngine } from "./engine.js";
 import { GroqClient } from "./groq.js";
+import { createMailer } from "./mailer.js";
 import { createAnalysisQueue } from "./queue.js";
 import { Repository } from "./repository.js";
 
@@ -21,5 +22,6 @@ export function createContainer() {
   const groq = new GroqClient(config);
   const engine = new PreMortemEngine(repo, groq, config);
   const queue = createAnalysisQueue(redis);
-  return { config, pool, redis: redis as any, repo, engine, queue };
+  const mailer = createMailer(config);
+  return { config, pool, redis: redis as any, repo, engine, queue, mailer };
 }

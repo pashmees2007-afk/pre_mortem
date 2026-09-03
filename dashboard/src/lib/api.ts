@@ -41,6 +41,8 @@ export function getSession(): Promise<ProductSession> { return authRequest("sess
 export function signIn(input: { email: string; password: string }): Promise<Pick<ProductSession, "user" | "organization">> { return authRequest("login", { method: "POST", body: JSON.stringify(input) }); }
 export function register(input: { organizationName: string; displayName: string; email: string; password: string }): Promise<Pick<ProductSession, "user" | "organization">> { return authRequest("register", { method: "POST", body: JSON.stringify(input) }); }
 export function signOut(): Promise<{ ok: true }> { return authRequest("logout", { method: "POST" }); }
+export function requestPasswordReset(email: string): Promise<{ ok: true }> { return authRequest("password-reset/request", { method: "POST", body: JSON.stringify({ email }) }); }
+export function confirmPasswordReset(token: string, password: string): Promise<{ ok: true }> { return authRequest("password-reset/confirm", { method: "POST", body: JSON.stringify({ token, password }) }); }
 export async function listProjects(): Promise<Project[]> { const value = await request<{ projects: unknown[] }>("/v1/projects"); return value.projects.map((project) => projectSchema.parse(project)); }
 export function createProject(input: { name: string; retentionPolicy?: "standard" | "restricted" }): Promise<Project> { return request("/v1/projects", { method: "POST", body: JSON.stringify(input) }, projectSchema); }
 export function renameProject(projectId: string, name: string): Promise<Project> { return request(`/v1/projects/${encodeURIComponent(projectId)}`, { method: "PATCH", body: JSON.stringify({ name }) }, projectSchema); }

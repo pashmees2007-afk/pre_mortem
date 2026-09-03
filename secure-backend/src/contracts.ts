@@ -26,6 +26,15 @@ export const LoginInput = z.object({
   password: z.string().min(1).max(200),
 }).strict();
 
+export const PasswordResetRequestInput = z.object({
+  email: Email,
+}).strict();
+
+export const PasswordResetConfirmInput = z.object({
+  token: z.string().min(20).max(400),
+  password: Password,
+}).strict();
+
 export const CreateProjectInput = z.object({
   name: z.string().trim().min(2).max(160),
   retentionPolicy: z.enum(["standard", "restricted"]).default("standard"),
