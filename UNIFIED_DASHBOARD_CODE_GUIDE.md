@@ -19,7 +19,7 @@ flowchart LR
   Q --> W[Worker]
   W --> E[PreMortem Engine]
   E --> G1[Groq Qwen: typed reasoning]
-  E --> G2[Groq Compound Mini: web evidence]
+  E --> G2[Groq GPT-OSS browser_search: web evidence]
   E --> PG
 ```
 
@@ -151,7 +151,7 @@ Normalize plan
   → Persist the result and trace
 ```
 
-The engine uses Qwen for typed reasoning and Compound Mini only for web search. Every displayed claim/risk must refer to a retained evidence ID. The source policy in `evidence.ts` selects trusted domains first and the critic checks Tier-1 coverage for each branch independently.
+The engine uses Qwen for typed reasoning and GPT-OSS `browser_search` only for web search. Every displayed claim/risk must refer to a retained evidence ID. The source policy in `evidence.ts` selects trusted domains first and the critic checks Tier-1 coverage for each branch independently.
 
 The Groq client in `groq.ts` uses bounded recovery: strict JSON schema where appropriate, JSON-object mode for compact steps, removal of accidental prose framing, one constrained regeneration, and one bounded schema repair. If recovery still fails, it records an explicit `attention` fallback instead of making up evidence. The latest live validation completed with no fallback stages.
 

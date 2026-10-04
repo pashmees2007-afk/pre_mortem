@@ -6,6 +6,7 @@ import { GroqClient } from "./groq.js";
 import { createMailer } from "./mailer.js";
 import { createAnalysisQueue } from "./queue.js";
 import { Repository } from "./repository.js";
+import { createSearcher } from "./search.js";
 
 const require = createRequire(import.meta.url);
 const Redis = require("ioredis") as new (url: string, options: Record<string, unknown>) => {
@@ -20,8 +21,9 @@ export function createContainer() {
   const redis = new Redis(config.REDIS_URL, { maxRetriesPerRequest: null, enableReadyCheck: true });
   const repo = new Repository(pool);
   const groq = new GroqClient(config);
-  const engine = new PreMortemEngine(repo, groq, config);
+  const searcher = createSearcher(config, groq);
+  const engine = new PreMortemEngine(repo, groq, config, searcher);
   const queue = createAnalysisQueue(redis);
   const mailer = createMailer(config);
-  return { config, pool, redis: redis as any, repo, engine, queue, mailer };
+  return { config, pool, redis: redis as any, repo, groq, searcher, engine, queue, mailer };
 }

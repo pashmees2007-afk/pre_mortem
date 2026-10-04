@@ -19,6 +19,7 @@ import {
 import { evidenceTopicFor, retrieveEvidence, siteKey } from "./evidence.js";
 import { AppError, UpstreamError } from "./errors.js";
 import { GroqClient } from "./groq.js";
+import type { WebSearcher } from "./search.js";
 import { SYSTEM, dataBlock } from "./prompts.js";
 import { type Repository } from "./repository.js";
 import { classifyComparison, rescoreSeverity } from "./scoring.js";
@@ -176,12 +177,14 @@ export class PreMortemEngine {
     private readonly repo: Repository,
     private readonly groq: GroqClient,
     private readonly config: Config,
+    private readonly searcher: WebSearcher = groq,
   ) {}
 
   async run(runId: string) {
     const run = await this.repo.getRunForWorker(runId);
     if (!run) return; // A duplicate queue delivery or previously processed idempotency key.
     const usageBeforeRun = this.groq.getUsage();
+    const searchesBeforeRun = this.searcher.getSearchCount?.();
     try {
       await this.repo.clearTransientArtifacts(run.id);
       const facts = await this.groq.strictJson({
@@ -221,12 +224,12 @@ export class PreMortemEngine {
         metadata: { angles: investigationPlan.angles, queries: investigationPlan.researchQueries },
       });
 
-      // Compound Mini's free-tier backing model has an 8K TPM quota. A pair of concurrent
-      // searches can reserve more than that together, so these independent branches are
+      // When Groq does the searching, its retrieval model's free tier has an 8K TPM quota, and one GPT-OSS browser search alone can
+      // consume most of it (opened pages count as prompt tokens), so these independent branches are
       // deliberately staged. They remain independent; only provider scheduling is serialized.
       const evidenceTopic = evidenceTopicFor(facts, [investigationPlan.researchQueries.A, investigationPlan.researchQueries.B]);
       const evidenceA = await retrieveEvidence({
-        client: this.groq, facts, branch: "A", actorId: run.requestedBy, plannedQuery: investigationPlan.researchQueries.A, topic: evidenceTopic,
+        client: this.searcher, facts, branch: "A", actorId: run.requestedBy, plannedQuery: investigationPlan.researchQueries.A, topic: evidenceTopic,
       });
       await this.repo.recordTrace({
         runId: run.id,
@@ -236,9 +239,10 @@ export class PreMortemEngine {
         detail: `Retrieved and retained ${evidenceA.length} HTTPS evidence records for the first independent research angle.`,
         metadata: { branch: "A", retained: evidenceA.length },
       });
-      await pause(this.config.NODE_ENV === "test" ? 0 : GROQ_EVIDENCE_COOLDOWN_MS);
+      // A search API such as Tavily has its own quota, so the Groq token cooldown is not needed.
+      if (this.searcher.sharesGroqBudget) await pause(this.config.NODE_ENV === "test" ? 0 : GROQ_EVIDENCE_COOLDOWN_MS);
       const evidenceB = await retrieveEvidence({
-        client: this.groq, facts, branch: "B", actorId: run.requestedBy, plannedQuery: investigationPlan.researchQueries.B, topic: evidenceTopic,
+        client: this.searcher, facts, branch: "B", actorId: run.requestedBy, plannedQuery: investigationPlan.researchQueries.B, topic: evidenceTopic,
         excludeHostnames: evidenceA.map((source) => source.hostname),
       });
       await this.repo.recordTrace({
@@ -388,13 +392,14 @@ export class PreMortemEngine {
         promptTokens: usageAfterRun.promptTokens - usageBeforeRun.promptTokens,
         completionTokens: usageAfterRun.completionTokens - usageBeforeRun.completionTokens,
         totalTokens: usageAfterRun.totalTokens - usageBeforeRun.totalTokens,
+        ...(searchesBeforeRun === undefined ? {} : { externalSearches: (this.searcher.getSearchCount?.() ?? 0) - searchesBeforeRun }),
       };
       await this.repo.recordTrace({
         runId: run.id,
         skill: "Usage Ledger",
         stage: "record_provider_usage",
         status: "completed",
-        detail: `This run made ${runUsage.requests} Groq request${runUsage.requests === 1 ? "" : "s"}${runUsage.totalTokens ? ` using ${runUsage.totalTokens} tokens` : ""}.`,
+        detail: `This run made ${runUsage.requests} Groq request${runUsage.requests === 1 ? "" : "s"}${runUsage.totalTokens ? ` using ${runUsage.totalTokens} tokens` : ""}${runUsage.externalSearches === undefined ? "" : ` and ${runUsage.externalSearches} Tavily search${runUsage.externalSearches === 1 ? "" : "es"}`}.`,
         metadata: runUsage,
       });
     } catch (error) {

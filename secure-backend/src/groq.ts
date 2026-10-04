@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { Config } from "./config.js";
 import { UpstreamError } from "./errors.js";
+import type { WebSearchArgs, WebSearcher } from "./search.js";
 
 type GroqMessage = { role: "system" | "user"; content: string };
 type GroqResponse = {
@@ -11,6 +12,43 @@ type GroqResponse = {
 export type GroqUsageTotals = { requests: number; promptTokens: number; completionTokens: number; totalTokens: number };
 
 type ResponseMode = "schema" | "object";
+
+const MAX_RATE_RETRY_WAIT_MS = 90_000;
+// GPT-OSS spends hidden reasoning tokens from the same max_completion_tokens budget as its answer,
+// so stage budgets sized for Qwen's direct answers leave no room for the JSON itself.
+const REASONING_HEADROOM_TOKENS = 800;
+
+/** GPT-OSS models reason before answering; Qwen's structured stages answer directly. */
+export function isReasoningModel(model: string) {
+  return model.startsWith("openai/gpt-oss");
+}
+
+/** Completion budget (plus a low reasoning effort for reasoning models) for one structured request. */
+function completionSettings(model: string, answerTokens: number) {
+  return isReasoningModel(model)
+    ? { max_completion_tokens: answerTokens + REASONING_HEADROOM_TOKENS, reasoning_effort: "low" }
+    : { max_completion_tokens: answerTokens };
+}
+
+/** Groq rejects a JSON-mode response it could not complete, e.g. when reasoning exhausts the budget. */
+function isJsonGenerationFailure(error: unknown) {
+  return error instanceof UpstreamError
+    && (error.message.includes("Failed to generate JSON") || error.message.includes("Failed to validate JSON"));
+}
+
+/** Compound models take `compound_custom`/`search_settings`; every other retrieval model uses the `browser_search` tool. */
+export function isCompoundModel(model: string) {
+  return model.startsWith("groq/compound") || model.startsWith("compound-");
+}
+
+/** Converts a Groq rate-limit hint such as "try again in 46.2s", "in 1m2.5s", or "in 450ms" to milliseconds. */
+export function retryHintMs(message: string): number | null {
+  const hint = message.match(/try again in\s+(?:(\d+)m(?!s))?\s*(\d+(?:\.\d+)?)\s*(ms|s|seconds?)/i);
+  if (!hint) return null;
+  const minutes = Number.parseInt(hint[1] ?? "0", 10);
+  const value = Number.parseFloat(hint[2] ?? "0");
+  return minutes * 60_000 + (hint[3]?.toLowerCase() === "ms" ? value : value * 1_000);
+}
 
 function parseJsonObject(text: string): unknown {
   try {
@@ -43,7 +81,8 @@ function parseJsonObject(text: string): unknown {
   }
 }
 
-export class GroqClient {
+export class GroqClient implements WebSearcher {
+  readonly sharesGroqBudget = true;
   private structuredRequestTail: Promise<void> = Promise.resolve();
   private usage: GroqUsageTotals = { requests: 0, promptTokens: 0, completionTokens: 0, totalTokens: 0 };
 
@@ -72,11 +111,9 @@ export class GroqClient {
     try {
       return await this.request(body);
     } catch (error) {
-      const hint = error instanceof UpstreamError ? error.message.match(/try again in\s+(\d+(?:\.\d+)?)\s*(ms|s|seconds?)/i) : null;
-      if (!hint) throw error;
-      const value = Number.parseFloat(hint[1] ?? "0");
-      const unit = hint[2]?.toLowerCase();
-      const hintedDelay = unit === "ms" ? value : value * 1_000;
+      const hintedDelay = error instanceof UpstreamError ? retryHintMs(error.message) : null;
+      // A per-minute (TPM) wait is worth one retry; a minutes-long daily-quota (TPD) wait would only stall the worker.
+      if (hintedDelay === null || hintedDelay > MAX_RATE_RETRY_WAIT_MS) throw error;
       const waitMs = this.config.NODE_ENV === "test" ? 0 : Math.max(1_000, Math.ceil(hintedDelay + 250));
       await new Promise<void>((resolve) => setTimeout(resolve, waitMs));
       return this.request(body);
@@ -90,7 +127,7 @@ export class GroqClient {
         authorization: `Bearer ${this.config.GROQ_API_KEY}`,
         "content-type": "application/json",
       };
-      if (body.model === this.config.GROQ_RETRIEVAL_MODEL) {
+      if (body.model === this.config.GROQ_RETRIEVAL_MODEL && isCompoundModel(this.config.GROQ_RETRIEVAL_MODEL)) {
         // Basic search avoids enabling newer Compound tools the evidence pipeline does not use.
         headers["Groq-Model-Version"] = "2025-07-23";
       }
@@ -118,10 +155,12 @@ export class GroqClient {
 
   async strictJson<T extends z.ZodType>(args: { model?: string; name: string; schema: Record<string, unknown>; output: T; system: string; user: string; actorId: string; maxCompletionTokens?: number; responseMode?: ResponseMode }) {
     const outputContract = JSON.stringify(args.schema);
+    const model = args.model ?? this.config.GROQ_STRUCTURED_MODEL;
+    const recoveryTokens = Math.min(Math.max(args.maxCompletionTokens ?? 600, 450), 1_100);
     const request = {
-      model: args.model ?? this.config.GROQ_STRUCTURED_MODEL,
+      model,
       temperature: 0,
-      max_completion_tokens: args.maxCompletionTokens ?? 1_400,
+      ...completionSettings(model, args.maxCompletionTokens ?? 1_400),
       user: args.actorId,
       messages: [
         {
@@ -131,43 +170,53 @@ export class GroqClient {
         { role: "user", content: args.user },
       ] satisfies GroqMessage[],
     };
-    let raw: GroqResponse;
-    if (args.responseMode === "object") {
-      // Compact stages have only a few keys but carry substantial evidence as
-      // input. JSON-object mode avoids native-schema rejection from Qwen while
-      // retaining local Zod validation and the same recovery ladder.
-      raw = await this.structuredRequest({ ...request, response_format: { type: "json_object" } });
-    } else {
-      try {
-        raw = await this.structuredRequest({
-          ...request,
-          response_format: { type: "json_schema", json_schema: { name: args.name, strict: true, schema: args.schema } },
-        });
-      } catch (error) {
-        const schemaRejected = error instanceof UpstreamError
-          && (error.message.includes("Failed to validate JSON") || error.message.includes("Generated JSON does not match the expected schema"));
-        if (!schemaRejected) throw error;
-        raw = await this.structuredRequest({ ...request, response_format: { type: "json_object" } });
-      }
-    }
-    const text = raw.choices?.[0]?.message?.content;
-    if (!text) throw new UpstreamError("The analysis provider returned an empty response");
-    let candidateText = text;
+    let raw: GroqResponse | undefined;
     let fields = "root: response was not a complete JSON object";
     try {
-      const parsed = args.output.safeParse(parseJsonObject(text));
-      if (parsed.success) return parsed.data;
-      fields = parsed.error.issues.map((issue) => `${issue.path.join(".") || "root"}: ${issue.message}`).slice(0, 5).join("; ");
-    } catch { /* Ask for a fresh object before attempting a bounded repair. */ }
+      if (args.responseMode === "object") {
+        // Compact stages have only a few keys but carry substantial evidence as
+        // input. JSON-object mode avoids native-schema rejection from Qwen while
+        // retaining local Zod validation and the same recovery ladder.
+        raw = await this.structuredRequest({ ...request, response_format: { type: "json_object" } });
+      } else {
+        try {
+          raw = await this.structuredRequest({
+            ...request,
+            response_format: { type: "json_schema", json_schema: { name: args.name, strict: true, schema: args.schema } },
+          });
+        } catch (error) {
+          const schemaRejected = error instanceof UpstreamError
+            && (error.message.includes("Failed to validate JSON") || error.message.includes("Generated JSON does not match the expected schema"));
+          if (!schemaRejected) throw error;
+          raw = await this.structuredRequest({ ...request, response_format: { type: "json_object" } });
+        }
+      }
+    } catch (error) {
+      // The provider produced no usable object (for example, reasoning used the whole budget).
+      // Fall through to the single regeneration below instead of failing the stage outright.
+      if (!isJsonGenerationFailure(error)) throw error;
+      fields = "root: the provider could not finish a valid JSON object";
+    }
+    let candidateText = "";
+    if (raw) {
+      const text = raw.choices?.[0]?.message?.content;
+      if (!text) throw new UpstreamError("The analysis provider returned an empty response");
+      candidateText = text;
+      try {
+        const parsed = args.output.safeParse(parseJsonObject(text));
+        if (parsed.success) return parsed.data;
+        fields = parsed.error.issues.map((issue) => `${issue.path.join(".") || "root"}: ${issue.message}`).slice(0, 5).join("; ");
+      } catch { /* Ask for a fresh object before attempting a bounded repair. */ }
+    }
 
     // Qwen can emit either valid JSON with missing fields or truncated JSON.
     // Regenerate once with local validation feedback, then make one bounded
     // data-only repair pass. Zod remains the final authority throughout.
     // Zod remains the final authority throughout the recovery ladder.
     const regenerated = await this.structuredRequest({
-      model: request.model,
+      model,
       temperature: 0,
-      max_completion_tokens: Math.min(Math.max(args.maxCompletionTokens ?? 600, 450), 1_100),
+      ...completionSettings(model, recoveryTokens),
       user: args.actorId,
       response_format: { type: "json_object" },
       messages: [
@@ -188,9 +237,9 @@ export class GroqClient {
       }
     }
     const repaired = await this.structuredRequest({
-      model: request.model,
+      model,
       temperature: 0,
-      max_completion_tokens: Math.min(Math.max(args.maxCompletionTokens ?? 600, 450), 1_100),
+      ...completionSettings(model, recoveryTokens),
       user: args.actorId,
       response_format: { type: "json_object" },
       messages: [
@@ -210,22 +259,48 @@ export class GroqClient {
     return repairedParsed.data;
   }
 
-  async webSearch(args: { query: string; actorId: string; includeDomains?: string[] }) {
-    return this.request({
-      model: this.config.GROQ_RETRIEVAL_MODEL,
+  async webSearch(args: WebSearchArgs) {
+    const model = this.config.GROQ_RETRIEVAL_MODEL;
+    const query = args.instruction ? `${args.instruction} ${args.query}` : args.query;
+    if (isCompoundModel(model)) {
+      return this.requestWithOneRateRetry({
+        model,
+        temperature: 0,
+        max_completion_tokens: 450,
+        // Compound Mini can otherwise reserve a large default completion budget before tool use.
+        max_tokens: 450,
+        user: args.actorId,
+        search_settings: args.includeDomains?.length ? { include_domains: args.includeDomains } : undefined,
+        compound_custom: { tools: { enabled_tools: ["web_search"] } },
+        messages: [
+          {
+            role: "system",
+            content: "You are an evidence retrieval subskill. You MUST invoke the web_search tool exactly once before responding. Never answer from memory. Return concise source-grounded findings only.",
+          },
+          { role: "user", content: `Find software-engineering failure precedents for this bounded research query. QUERY: ${query}` },
+        ] satisfies GroqMessage[],
+      });
+    }
+    // GPT-OSS browser_search: search hits carry only a URL and title, so the model must open the
+    // pages it relies on; evidence.ts keeps only opened pages, whose text becomes the snippet.
+    // The provider does not enforce a domain list for this tool, so evidence.ts also filters locally.
+    const domainRule = args.includeDomains?.length
+      ? ` Search and open ONLY pages on these sites: ${args.includeDomains.join(", ")}.`
+      : "";
+    return this.requestWithOneRateRetry({
+      model,
       temperature: 0,
-      max_completion_tokens: 450,
-      // Compound Mini can otherwise reserve a large default completion budget before tool use.
-      max_tokens: 450,
+      // Reasoning plus tool calls need far more room than Compound's 450-token answer.
+      max_completion_tokens: 2_000,
       user: args.actorId,
-      search_settings: args.includeDomains?.length ? { include_domains: args.includeDomains } : undefined,
-      compound_custom: { tools: { enabled_tools: ["web_search"] } },
+      tools: [{ type: "browser_search" }],
+      tool_choice: "required",
       messages: [
         {
           role: "system",
-          content: "You are an evidence retrieval subskill. You MUST invoke the web_search tool exactly once before responding. Never answer from memory. Return concise source-grounded findings only.",
+          content: `You are an evidence retrieval subskill. Call browser_search exactly once, then call browser.open on at most two of its results, then answer. Do not search again and do not use browser.find: every extra browsing step re-sends the opened pages and multiplies token cost.${domainRule} Never answer from memory. Reply with one short sentence per opened page.`,
         },
-        { role: "user", content: `Find software-engineering failure precedents for this bounded research query. QUERY: ${args.query}` },
+        { role: "user", content: `Find software-engineering failure precedents for this bounded research query. QUERY: ${query}` },
       ] satisfies GroqMessage[],
     });
   }

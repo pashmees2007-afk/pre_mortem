@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import type { Config } from "./config.js";
-import { GroqClient } from "./groq.js";
+import { GroqClient, retryHintMs } from "./groq.js";
 
 const config: Config = {
   NODE_ENV: "test", PORT: 3000, DATABASE_URL: "postgres://localhost/test", REDIS_URL: "redis://localhost:6379",
@@ -83,6 +83,41 @@ describe("GroqClient structured reasoning", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
+  it("adds reasoning headroom and a low reasoning effort for a GPT-OSS structured model", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify(validResponse), { status: 200 }));
+    await new GroqClient(config).strictJson({ model: "openai/gpt-oss-120b", name: "plan_facts", schema, output: Output, system: "system", user: "plan", actorId: "actor", maxCompletionTokens: 80 });
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toMatchObject({ model: "openai/gpt-oss-120b", max_completion_tokens: 880, reasoning_effort: "low" });
+  });
+
+  it("keeps Qwen's stage budget unchanged and sends no reasoning effort", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify(validResponse), { status: 200 }));
+    await new GroqClient(config).strictJson({ name: "plan_facts", schema, output: Output, system: "system", user: "plan", actorId: "actor", maxCompletionTokens: 700 });
+    const body = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
+    expect(body.max_completion_tokens).toBe(700);
+    expect(body).not.toHaveProperty("reasoning_effort");
+  });
+
+  it("regenerates once when the provider cannot finish a JSON object in schema or object mode", async () => {
+    const budgetExhausted = () => new Response(JSON.stringify({ error: { message: "Failed to validate JSON. Please adjust your prompt. See 'failed_generation' for more details." } }), { status: 400 });
+    const fetchMock = vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(budgetExhausted())
+      .mockResolvedValueOnce(budgetExhausted())
+      .mockResolvedValueOnce(new Response(JSON.stringify(validResponse), { status: 200 }));
+    await expect(new GroqClient(config).strictJson({ model: "openai/gpt-oss-120b", name: "plan_facts", schema, output: Output, system: "system", user: "plan", actorId: "actor", maxCompletionTokens: 700 }))
+      .resolves.toEqual({ outcome: "Ship integration", dependencies: ["gateway"] });
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(JSON.parse(String(fetchMock.mock.calls[2]?.[1]?.body))).toMatchObject({ response_format: { type: "json_object" }, reasoning_effort: "low" });
+  });
+
+  it("regenerates once when the provider reports it could not generate JSON", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: { message: "Failed to generate JSON. Please adjust your prompt." } }), { status: 400 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(validResponse), { status: 200 }));
+    await expect(new GroqClient(config).strictJson({ model: "openai/gpt-oss-120b", name: "plan_facts", schema, output: Output, system: "system", user: "plan", actorId: "actor", maxCompletionTokens: 80 }))
+      .resolves.toEqual({ outcome: "Ship integration", dependencies: ["gateway"] });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
   it("uses JSON-object mode first for a compact comparison stage", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ semanticRelation: "complements", explanation: "The branches expose separate release risks." }) } }] }), { status: 200 }));
     await expect(new GroqClient(config).strictJson({ name: "scenario_comparison", schema: comparisonSchema, output: ComparisonOutput, system: "system", user: "scenarios", actorId: "actor", responseMode: "object" }))
@@ -122,5 +157,53 @@ describe("GroqClient structured reasoning", () => {
     const client = new GroqClient(config);
     await client.strictJson({ name: "plan_facts", schema, output: Output, system: "system", user: "plan", actorId: "actor" });
     expect(client.getUsage()).toEqual({ requests: 1, promptTokens: 0, completionTokens: 0, totalTokens: 0 });
+  });
+});
+
+describe("GroqClient web search", () => {
+  const searchResponse = { choices: [{ message: { content: "findings", executed_tools: [] } }] };
+
+  it("uses the browser_search tool for a GPT-OSS retrieval model, without Compound-only fields", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify(searchResponse), { status: 200 }));
+    await new GroqClient({ ...config, GROQ_RETRIEVAL_MODEL: "openai/gpt-oss-20b" }).webSearch({ query: "rollback", actorId: "actor", includeDomains: ["kubernetes.io"] });
+    const init = fetchMock.mock.calls[0]?.[1];
+    const body = JSON.parse(String(init?.body));
+    expect(body).toMatchObject({ model: "openai/gpt-oss-20b", tools: [{ type: "browser_search" }], tool_choice: "required" });
+    expect(body.compound_custom).toBeUndefined();
+    expect(body.search_settings).toBeUndefined();
+    expect(body.messages[0].content).toContain("kubernetes.io");
+    expect((init?.headers as Record<string, string>)["Groq-Model-Version"]).toBeUndefined();
+  });
+
+  it("keeps the Compound web_search request for a groq/compound retrieval model", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify(searchResponse), { status: 200 }));
+    await new GroqClient(config).webSearch({ query: "rollback", actorId: "actor", includeDomains: ["kubernetes.io"] });
+    const init = fetchMock.mock.calls[0]?.[1];
+    const body = JSON.parse(String(init?.body));
+    expect(body).toMatchObject({ model: "groq/compound-mini", search_settings: { include_domains: ["kubernetes.io"] }, compound_custom: { tools: { enabled_tools: ["web_search"] } } });
+    expect(body.tools).toBeUndefined();
+    expect((init?.headers as Record<string, string>)["Groq-Model-Version"]).toBe("2025-07-23");
+  });
+
+  it("retries one web search after the provider's token-rate retry hint", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: { message: "Rate limit reached for model openai/gpt-oss-20b. Please try again in 1m2.5s." } }), { status: 429 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(searchResponse), { status: 200 }));
+    await new GroqClient({ ...config, GROQ_RETRIEVAL_MODEL: "openai/gpt-oss-20b" }).webSearch({ query: "rollback", actorId: "actor" });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("fails fast instead of waiting out a daily-quota hint measured in minutes", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: { message: "Rate limit reached on tokens per day (TPD). Please try again in 4m45.984s." } }), { status: 429 }));
+    await expect(new GroqClient({ ...config, GROQ_RETRIEVAL_MODEL: "openai/gpt-oss-20b" }).webSearch({ query: "rollback", actorId: "actor" })).rejects.toThrow("tokens per day");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("reads minute, second, and millisecond retry hints", () => {
+    expect(retryHintMs("Please try again in 1m2.5s.")).toBe(62_500);
+    expect(retryHintMs("Please try again in 46.252s.")).toBeCloseTo(46_252);
+    expect(retryHintMs("Please try again in 450ms.")).toBe(450);
+    expect(retryHintMs("Please try again later.")).toBeNull();
   });
 });
