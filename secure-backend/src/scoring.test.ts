@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Scenario } from "./contracts.js";
-import { classifyComparison, rescoreSeverity, scoreSeverity } from "./scoring.js";
+import { capTopRisks, classifyComparison, rescoreSeverity, scoreSeverity } from "./scoring.js";
 
 const sourceA = "11111111-1111-4111-8111-111111111111";
 const sourceB = "22222222-2222-4222-8222-222222222222";
@@ -50,5 +50,28 @@ describe("branch comparison", () => {
       { semanticRelation: "contradicts", explanation: "The branches identify different categories but not enough evidence." },
     );
     expect(result.displayStatus).toBe("insufficient_evidence");
+  });
+});
+
+describe("top-risk cap", () => {
+  const risk = (title: string, impact: number, likelihood: number) => ({ title, impact, likelihood });
+
+  it("keeps the two highest risks at severity 5 and lowers only the likelihood of the rest", () => {
+    // The model's order is kept in the output; ties at 20 go to the higher impact, then the earlier risk.
+    const { risks, capped } = capTopRisks([risk("staffing", 4, 5), risk("tsp", 5, 4), risk("ml", 5, 4), risk("audit", 4, 3)]);
+    expect(capped).toBe(1);
+    expect(risks).toEqual([risk("staffing", 4, 4), risk("tsp", 5, 4), risk("ml", 5, 4), risk("audit", 4, 3)]);
+    expect(risks.map((item) => scoreSeverity(item.impact, item.likelihood))).toEqual([4, 5, 5, 4]);
+  });
+
+  it("ranks a 25 above a 20 and brings an impact-5 risk past the limit down to 5 x 3", () => {
+    const { risks } = capTopRisks([risk("a", 5, 4), risk("b", 4, 5), risk("c", 5, 5)]);
+    expect(risks).toEqual([risk("a", 5, 4), risk("b", 4, 4), risk("c", 5, 5)]);
+    expect(capTopRisks([risk("a", 5, 5), risk("b", 5, 5), risk("c", 5, 4)]).risks[2]).toEqual(risk("c", 5, 3));
+  });
+
+  it("leaves a register within the limit unchanged", () => {
+    const register = [risk("a", 5, 4), risk("b", 4, 5), risk("c", 4, 4)];
+    expect(capTopRisks(register)).toEqual({ risks: register, capped: 0 });
   });
 });

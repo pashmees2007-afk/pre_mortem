@@ -150,6 +150,15 @@ describe("branch angles and risk count", () => {
     expect(completed().synthesis.risks).toHaveLength(4);
     expect(trace("Decision Skill")).toMatchObject({ metadata: { fallback: false } });
   });
+
+  it("keeps at most two risks at severity 5 and says so in the trace", async () => {
+    // The default synthesis scores all three risks 5 x 4.
+    const { engine, completed, trace } = harness();
+    await engine.run(runId);
+    expect(completed().synthesis.risks.map((risk) => [risk.impact, risk.likelihood])).toEqual([[5, 4], [5, 4], [5, 3]]);
+    expect(trace("Decision Skill")).toMatchObject({ metadata: { cappedTopRisks: 1 } });
+    expect(trace("Decision Skill").detail).toContain("At most 2 risks may score severity 5, so the likelihood of 1 more was lowered");
+  });
 });
 
 describe("stated mitigations", () => {

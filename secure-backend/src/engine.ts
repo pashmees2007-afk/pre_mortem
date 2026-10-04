@@ -23,7 +23,7 @@ import { GroqClient } from "./groq.js";
 import type { WebSearcher } from "./search.js";
 import { SYSTEM, dataBlock } from "./prompts.js";
 import { type Repository } from "./repository.js";
-import { classifyComparison, rescoreSeverity } from "./scoring.js";
+import { MAX_TOP_RISKS, capTopRisks, classifyComparison, rescoreSeverity } from "./scoring.js";
 
 /**
  * Short labels (E1, E2, ...) that stand in for evidence UUIDs in every prompt. Models copied long UUIDs back
@@ -471,14 +471,16 @@ export class PreMortemEngine {
         usedSynthesisFallback = true;
       }
       for (const risk of synthesis.risks) assertEvidenceReferences(risk.evidenceIds, allowedEvidence);
+      const capped = capTopRisks(synthesis.risks);
+      synthesis = { ...synthesis, risks: capped.risks };
       await this.repo.completeRun({ runId: run.id, facts, scenarioA, scenarioB, comparison, synthesis });
       await this.repo.recordTrace({
         runId: run.id,
         skill: "Decision Skill",
         stage: "rank_risks",
         status: usedSynthesisFallback ? "attention" : "completed",
-        detail: `${usedSynthesisFallback ? "Provider synthesis output was invalid; a transparent evidence-preserving synthesis was used. " : ""}Created ${synthesis.risks.length} evidence-linked risks and ranked them for human review.`,
-        metadata: { fallback: usedSynthesisFallback },
+        detail: `${usedSynthesisFallback ? "Provider synthesis output was invalid; a transparent evidence-preserving synthesis was used. " : ""}Created ${synthesis.risks.length} evidence-linked risks and ranked them for human review.${capped.capped ? ` At most ${MAX_TOP_RISKS} risks may score severity 5, so the likelihood of ${capped.capped} more was lowered to rank below them.` : ""}`,
+        metadata: { fallback: usedSynthesisFallback, cappedTopRisks: capped.capped },
       });
 
       const usageAfterRun = this.groq.getUsage();
