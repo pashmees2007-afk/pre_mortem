@@ -9,6 +9,9 @@ const EnvSchema = z.object({
   GROQ_RETRIEVAL_MODEL: z.string().min(3).default("groq/compound-mini"),
   // Qwen performs all schema-constrained reasoning; Compound Mini stays retrieval-only.
   GROQ_STRUCTURED_MODEL: z.string().min(3).default("qwen/qwen3.8-27b"),
+  // Optional second model family for branch B's scenario only, so the two branches don't share one
+  // model's blind spots. Unset keeps both branches on GROQ_STRUCTURED_MODEL; each run's trace records which applied.
+  GROQ_STRUCTURED_MODEL_B: z.string().min(3).optional(),
   JWT_SECRET: z.string().min(32),
   JWT_ISSUER: z.string().min(1),
   JWT_AUDIENCE: z.string().min(1),

@@ -35,10 +35,13 @@ function idsFromPrompt(user: string) {
   return [...user.matchAll(/[0-9a-f]{8}-[0-9a-f-]{27,}/gi)].map((match) => match[0]).slice(0, 2);
 }
 
+// One result list for every search: the branch split must hand A and B different publishers from it.
 const providerSearch = {
   choices: [{ message: { executed_tools: [{ search_results: { results: [
     { url: "https://sre.google/example-one", title: "Primary incident lesson", content: "A primary incident report on dependency validation and rollback ownership.", score: 0.9 },
+    { url: "https://kubernetes.io/docs/example-three", title: "Rollout guidance", content: "Official guidance on staged rollout and rollback for production workloads.", score: 0.85 },
     { url: "https://github.blog/example-two", title: "Engineering reliability lesson", content: "An engineering incident report on integration checks completed too late.", score: 0.8 },
+    { url: "https://learn.microsoft.com/example-four", title: "Reliability principles", content: "Design guidance on validating dependencies before release and testing recovery.", score: 0.75 },
   ] } }] } }],
 };
 
@@ -75,7 +78,7 @@ describe("engine retry recovery", () => {
         throw new Error(`Unexpected schema request: ${args.name}`);
       }),
     };
-    const engine = new PreMortemEngine(repo as any, groq as any, config);
+    const engine = new PreMortemEngine(repo as any, groq as any, { ...config, GROQ_STRUCTURED_MODEL_B: "second/model-family" });
 
     await expect(engine.run(runId)).rejects.toThrow("temporary retrieval outage");
     await engine.run(runId);
@@ -83,7 +86,18 @@ describe("engine retry recovery", () => {
     expect(repo.failRun).toHaveBeenCalledWith(runId, "ANALYSIS_FAILED");
     expect(repo.clearTransientArtifacts).toHaveBeenCalledTimes(2);
     expect(repo.saveEvidence).toHaveBeenCalledTimes(1);
-    expect(repo.saveEvidence.mock.calls[0]?.[1]).toHaveLength(2);
+    const stored = repo.saveEvidence.mock.calls[0]?.[1] as Array<{ branch: string; hostname: string }>;
+    expect(stored.filter((source) => source.branch === "A").map((source) => source.hostname)).toEqual(["kubernetes.io", "learn.microsoft.com"]);
+    expect(stored.filter((source) => source.branch === "B").map((source) => source.hostname)).toEqual(["sre.google", "github.blog"]);
+
+    const traces = repo.recordTrace.mock.calls.map((call) => call[0] as { skill: string; status: string; metadata?: Record<string, unknown> });
+    expect(traces.find((event) => event.skill === "Research Skill")).toMatchObject({ status: "completed", metadata: { sharedSites: [] } });
+    expect(traces.find((event) => event.skill === "Independent Scenario Agents")?.metadata).toEqual({ models: { A: "qwen/qwen3.8-27b", B: "second/model-family" }, distinctModels: true });
+    const scenarioModels = groq.strictJson.mock.calls
+      .map(([args]: [{ name: string; model?: string }]) => args)
+      .filter((args) => args.name.startsWith("scenario_") && args.name !== "scenario_comparison")
+      .map((args) => `${args.name}:${args.model}`);
+    expect(scenarioModels.slice(-2)).toEqual(["scenario_a:qwen/qwen3.8-27b", "scenario_b:second/model-family"]);
     expect(repo.completeRun).toHaveBeenCalledTimes(1);
     expect(repo.completeRun.mock.calls[0]?.[0]).toMatchObject({ runId, facts });
     const compactStages = groq.strictJson.mock.calls

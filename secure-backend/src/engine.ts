@@ -16,7 +16,7 @@ import {
   type Scenario,
   type Synthesis,
 } from "./contracts.js";
-import { retrieveEvidence } from "./evidence.js";
+import { evidenceTopicFor, retrieveEvidence, siteKey } from "./evidence.js";
 import { AppError, UpstreamError } from "./errors.js";
 import { GroqClient } from "./groq.js";
 import { SYSTEM, dataBlock } from "./prompts.js";
@@ -224,8 +224,9 @@ export class PreMortemEngine {
       // Compound Mini's free-tier backing model has an 8K TPM quota. A pair of concurrent
       // searches can reserve more than that together, so these independent branches are
       // deliberately staged. They remain independent; only provider scheduling is serialized.
+      const evidenceTopic = evidenceTopicFor(facts, [investigationPlan.researchQueries.A, investigationPlan.researchQueries.B]);
       const evidenceA = await retrieveEvidence({
-        client: this.groq, facts, branch: "A", actorId: run.requestedBy, plannedQuery: investigationPlan.researchQueries.A,
+        client: this.groq, facts, branch: "A", actorId: run.requestedBy, plannedQuery: investigationPlan.researchQueries.A, topic: evidenceTopic,
       });
       await this.repo.recordTrace({
         runId: run.id,
@@ -237,7 +238,8 @@ export class PreMortemEngine {
       });
       await pause(this.config.NODE_ENV === "test" ? 0 : GROQ_EVIDENCE_COOLDOWN_MS);
       const evidenceB = await retrieveEvidence({
-        client: this.groq, facts, branch: "B", actorId: run.requestedBy, plannedQuery: investigationPlan.researchQueries.B,
+        client: this.groq, facts, branch: "B", actorId: run.requestedBy, plannedQuery: investigationPlan.researchQueries.B, topic: evidenceTopic,
+        excludeHostnames: evidenceA.map((source) => source.hostname),
       });
       await this.repo.recordTrace({
         runId: run.id,
@@ -253,20 +255,25 @@ export class PreMortemEngine {
       const sources = deDuplicateAcrossBranches(evidenceA, evidenceB);
       for (const source of sources.stored) EvidenceSourceSchema.parse(source);
       await this.repo.saveEvidence(run.id, sources.stored);
+      const sitesA = new Set(evidenceA.map((source) => siteKey(source.hostname)));
+      const sharedSites = [...new Set(evidenceB.map((source) => siteKey(source.hostname)))].filter((site) => sitesA.has(site));
       await this.repo.recordTrace({
         runId: run.id,
         skill: "Research Skill",
         stage: "retrieve_and_check_sources",
-        status: "completed",
-        detail: `Retrieved and retained ${sources.stored.length} HTTPS evidence records across two independent branches.`,
-        metadata: { branchA: evidenceA.length, branchB: evidenceB.length },
+        status: sharedSites.length ? "attention" : "completed",
+        detail: sharedSites.length
+          ? `Retrieved and retained ${sources.stored.length} HTTPS evidence records, but the branches share ${sharedSites.length} source website(s): ${sharedSites.join(", ")}.`
+          : `Retrieved and retained ${sources.stored.length} HTTPS evidence records across two branches with no source website in common.`,
+        metadata: { branchA: evidenceA.length, branchB: evidenceB.length, topic: evidenceTopic, sharedSites },
       });
 
-      // Qwen's on-demand tier shares an 8K TPM budget. Scenario prompts are
-      // deliberately serialized; the branches stay independent because they
-      // receive separate evidence and do not exchange outputs.
-      const scenarioA = await this.createScenario(run.plan, facts, sources.left, "A", run.requestedBy);
-      const scenarioB = await this.createScenario(run.plan, facts, sources.right, "B", run.requestedBy);
+      // Scenario prompts are deliberately serialized to respect per-model token budgets; the branches stay
+      // independent because they receive separate evidence and do not exchange outputs.
+      const modelA = this.config.GROQ_STRUCTURED_MODEL;
+      const modelB = this.config.GROQ_STRUCTURED_MODEL_B ?? modelA;
+      const scenarioA = await this.createScenario(run.plan, facts, sources.left, "A", run.requestedBy, modelA);
+      const scenarioB = await this.createScenario(run.plan, facts, sources.right, "B", run.requestedBy, modelB);
       let semantic: Pick<Comparison, "semanticRelation" | "explanation">;
       let usedComparatorFallback = false;
       try {
@@ -292,7 +299,10 @@ export class PreMortemEngine {
         skill: "Independent Scenario Agents",
         stage: "form_failure_hypotheses",
         status: "completed",
-        detail: "Produced two independent, evidence-limited failure narratives before synthesis.",
+        detail: modelA === modelB
+          ? `Produced two evidence-limited failure narratives before synthesis; both branches used the same model (${modelA}).`
+          : `Produced two evidence-limited failure narratives before synthesis, written by different models (branch A: ${modelA}; branch B: ${modelB}).`,
+        metadata: { models: { A: modelA, B: modelB }, distinctModels: modelA !== modelB },
       });
       await this.repo.recordTrace({
         runId: run.id,
@@ -393,8 +403,9 @@ export class PreMortemEngine {
     }
   }
 
-  private async createScenario(plan: string, facts: unknown, evidence: EvidenceSource[], branch: "A" | "B", actorId: string) {
+  private async createScenario(plan: string, facts: unknown, evidence: EvidenceSource[], branch: "A" | "B", actorId: string, model: string) {
     const scenario = await this.groq.strictJson({
+      model,
       name: `scenario_${branch.toLowerCase()}`,
       schema: (await import("./contracts.js")).jsonSchemas.scenario,
       output: ScenarioSchema,

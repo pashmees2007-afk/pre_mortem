@@ -5,7 +5,7 @@
 
 **Most "AI risk analysis" tools give you one confident paragraph and no way to check it. Pre-Mortem gives you a risk register you can actually audit.**
 
-Paste a sprint plan or PRD in and two independent AI research branches investigate it in parallel, each grounded in retrieved web evidence instead of the model's own guesses. A critic stage compares the branches, calls out where they disagree, and flags any risk that isn't backed by a real source. Nothing gets escalated to a mitigation action without a human approving it first. The result is a risk register where every claim traces back to an inspectable source, every disagreement is visible instead of averaged away, and every action requires a person to sign off — built for teams who need to trust *why* a risk was flagged, not just that it was.
+Paste a sprint plan or PRD in and two separate research branches investigate it, each grounded in retrieved web evidence instead of the model's own guesses. The branches never see each other's output, draw on evidence pools that share no source website, and can be written by different model families. A critic stage compares the branches, calls out where they disagree, and flags any risk that isn't backed by a real source. Nothing gets escalated to a mitigation action without a human approving it first. The result is a risk register where every claim traces back to an inspectable source, every disagreement is visible instead of averaged away, and every action requires a person to sign off — built for teams who need to trust *why* a risk was flagged, not just that it was.
 
 ## How it works
 
@@ -16,7 +16,7 @@ The Agentic MVP adds an inspectable closed loop: **understand the plan → choos
 | Step | System behavior | What the user can inspect |
 |---|---|---|
 | Investigation Planner | Chooses the risk angles and writes two focused research queries for the current plan. | Chosen angles, branch assignment, and query text. |
-| Research Skill | Retrieves HTTPS evidence for each branch and retains only structured source records. | Research trace, retained sources, evidence ledger. |
+| Research Skill | Retrieves HTTPS evidence for each branch from its own set of source websites and retains only structured source records. | Research trace, retained sources, evidence ledger, and any shared website flagged in the trace. |
 | Independent branches and Critic | Creates two evidence-limited failure hypotheses, compares them, and calls out the most important evidence gap. | Scenarios, disagreement matrix, critic finding, and next check. |
 | Human Approval Gate | Requires a person to approve a mitigation before an action is recorded. | Approval note, owner, and due date. |
 | Mock Action and Verification | Records a reversible mock task; a human marks it verified or failed. A failed verification creates a replan trace. | Action board, verification note, and replan event. |

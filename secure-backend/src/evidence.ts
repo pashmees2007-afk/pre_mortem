@@ -2,10 +2,36 @@ import { randomUUID } from "node:crypto";
 import type { EvidenceSource, PlanFacts } from "./contracts.js";
 import { GroqClient } from "./groq.js";
 
-const ENGINEERING_TIER_ONE_DOMAINS = ["kubernetes.io", "docs.kubernetes.io", "sre.google", "github.blog", "blog.cloudflare.com", "aws.amazon.com", "docs.aws.amazon.com", "learn.microsoft.com", "docs.stripe.com", "developer.mozilla.org"];
-const FINTECH_TIER_ONE_DOMAINS = ["fsb.org", "bankofengland.co.uk", "ofac.treasury.gov", "bsaaml.ffiec.gov", "fincen.gov", "fca.org.uk", "ico.org.uk", "docs.stripe.com", "aws.amazon.com", "sre.google"];
-const TIER_ONE_DOMAINS = new Set([...ENGINEERING_TIER_ONE_DOMAINS, ...FINTECH_TIER_ONE_DOMAINS]);
+export type EvidenceTopic = "engineering" | "fintech";
+type Branch = "A" | "B";
+
+// Each branch gets its own half of the Tier-1 set, split by publishing organisation and
+// assigned to the same branch in both topics, so the two lines of investigation never
+// draw on the same publisher's guidance.
+const TIER_ONE_BY_TOPIC: Record<EvidenceTopic, Record<Branch, string[]>> = {
+  engineering: {
+    A: ["kubernetes.io", "docs.kubernetes.io", "learn.microsoft.com", "docs.stripe.com", "developer.mozilla.org"],
+    B: ["sre.google", "github.blog", "blog.cloudflare.com", "aws.amazon.com", "docs.aws.amazon.com"],
+  },
+  fintech: {
+    A: ["fsb.org", "bankofengland.co.uk", "fca.org.uk", "ico.org.uk", "docs.stripe.com"],
+    B: ["ofac.treasury.gov", "bsaaml.ffiec.gov", "fincen.gov", "aws.amazon.com", "sre.google"],
+  },
+};
+const TIER_ONE_DOMAINS = new Set(Object.values(TIER_ONE_BY_TOPIC).flatMap((byBranch) => [...byBranch.A, ...byBranch.B]));
 const TIER_TWO_SUFFIXES = [".edu", ".gov", ".org"];
+const SECOND_LEVEL_LABELS = new Set(["co", "ac", "gov", "org", "com", "net"]);
+
+/** The organisation-level site a hostname belongs to, e.g. docs.aws.amazon.com -> amazon.com, bankofengland.co.uk -> bankofengland.co.uk. */
+export function siteKey(hostname: string) {
+  const labels = hostname.toLowerCase().replace(/^www\./, "").split(".").filter(Boolean);
+  const keep = labels.length >= 3 && labels.at(-1)!.length === 2 && SECOND_LEVEL_LABELS.has(labels.at(-2)!) ? 3 : 2;
+  return labels.slice(-keep).join(".");
+}
+
+export function tierOneDomainsFor(topic: EvidenceTopic, branch: Branch) {
+  return TIER_ONE_BY_TOPIC[topic][branch];
+}
 
 function classifyTier(hostname: string): 1 | 2 | 3 {
   const canonicalHostname = hostname.toLowerCase().replace(/^www\./, "");
@@ -14,13 +40,14 @@ function classifyTier(hostname: string): 1 | 2 | 3 {
   return 3;
 }
 
-function trustedDomainsFor(facts: PlanFacts, plannedQuery?: string) {
-  const context = [facts.outcome, facts.dependencies.join(" "), facts.technicalChanges.join(" "), facts.missingControls.join(" "), plannedQuery ?? ""].join(" ").toLowerCase();
+/** Chosen once per run from the plan and both branch queries, so the two branches split the same Tier-1 set. */
+export function evidenceTopicFor(facts: PlanFacts, plannedQueries: Array<string | undefined> = []): EvidenceTopic {
+  const context = [facts.outcome, facts.dependencies.join(" "), facts.technicalChanges.join(" "), facts.missingControls.join(" "), ...plannedQueries.map((query) => query ?? "")].join(" ").toLowerCase();
   const fintechPattern = /fintech|payment|wallet|payout|settlement|reconciliation|kyc|aml|sanction|bank|funds|card|currency|financial/;
-  return fintechPattern.test(context) ? FINTECH_TIER_ONE_DOMAINS : ENGINEERING_TIER_ONE_DOMAINS;
+  return fintechPattern.test(context) ? "fintech" : "engineering";
 }
 
-function branchQuery(facts: PlanFacts, branch: "A" | "B", plannedQuery?: string) {
+function branchQuery(facts: PlanFacts, branch: Branch, plannedQuery?: string) {
   if (plannedQuery) return plannedQuery.slice(0, 900);
   const focus = branch === "A"
     ? `scope planning delivery capacity requirements ${facts.timeline} ${facts.team}`
@@ -28,8 +55,8 @@ function branchQuery(facts: PlanFacts, branch: "A" | "B", plannedQuery?: string)
   return `${facts.outcome} engineering project failure postmortem ${focus}`.slice(0, 900);
 }
 
-function extractEvidence(args: { response: Awaited<ReturnType<GroqClient["webSearch"]>>; branch: "A" | "B"; seen: Set<string>; sources: EvidenceSource[] }) {
-  const { response, branch, seen, sources } = args;
+function extractEvidence(args: { response: Awaited<ReturnType<GroqClient["webSearch"]>>; branch: Branch; seen: Set<string>; excludedSites: Set<string>; sources: EvidenceSource[] }) {
+  const { response, branch, seen, excludedSites, sources } = args;
   const tools = response.choices?.[0]?.message?.executed_tools ?? [];
   const raw = tools.flatMap((tool: any) => {
     const searchResults = tool?.search_results;
@@ -43,7 +70,7 @@ function extractEvidence(args: { response: Awaited<ReturnType<GroqClient["webSea
       const url = new URL(String(item.url));
       const title = String(item.title ?? "").trim();
       const snippet = String(item.content ?? item.snippet ?? "").trim();
-      if (url.protocol !== "https:" || !title || snippet.length < 20 || seen.has(url.toString())) continue;
+      if (url.protocol !== "https:" || !title || snippet.length < 20 || seen.has(url.toString()) || excludedSites.has(siteKey(url.hostname))) continue;
       seen.add(url.toString());
       sources.push({
         id: randomUUID(), branch, url: url.toString(), hostname: url.hostname.toLowerCase(),
@@ -56,19 +83,29 @@ function extractEvidence(args: { response: Awaited<ReturnType<GroqClient["webSea
   }
 }
 
-export async function retrieveEvidence(args: { client: GroqClient; facts: PlanFacts; branch: "A" | "B"; actorId: string; includeDomains?: string[]; plannedQuery?: string }): Promise<EvidenceSource[]> {
+export async function retrieveEvidence(args: {
+  client: GroqClient; facts: PlanFacts; branch: Branch; actorId: string; includeDomains?: string[]; plannedQuery?: string;
+  topic?: EvidenceTopic;
+  /** Hostnames the other branch already retained; their whole sites are off-limits to this branch. */
+  excludeHostnames?: string[];
+}): Promise<EvidenceSource[]> {
   const query = branchQuery(args.facts, args.branch, args.plannedQuery);
-  const trustedDomains = args.includeDomains?.length ? args.includeDomains : trustedDomainsFor(args.facts, args.plannedQuery);
+  const topic = args.topic ?? evidenceTopicFor(args.facts, [args.plannedQuery]);
+  const trustedDomains = args.includeDomains?.length ? args.includeDomains : tierOneDomainsFor(topic, args.branch);
+  const otherBranch: Branch = args.branch === "A" ? "B" : "A";
+  // The other branch's reserved publishers and every site it actually used are excluded, so the two evidence
+  // pools never share a website even when the unrestricted broad search surfaces one.
+  const excludedSites = new Set([...tierOneDomainsFor(topic, otherBranch), ...(args.excludeHostnames ?? [])].map(siteKey));
   const seen = new Set<string>();
   const sources: EvidenceSource[] = [];
   const trustedQuery = `Find official guidance, control expectations, engineering documentation, production guidance, or incident learning relevant to this project-risk question. ${query}`;
   const trustedResponse = await args.client.webSearch({ query: trustedQuery, actorId: args.actorId, includeDomains: trustedDomains });
-  extractEvidence({ response: trustedResponse, branch: args.branch, seen, sources });
+  extractEvidence({ response: trustedResponse, branch: args.branch, seen, excludedSites, sources });
   if (sources.length >= 2) return sources;
 
   // Tier-1 material is prioritised, not fabricated: broad search fills only the remaining evidence slots.
   const broadResponse = await args.client.webSearch({ query, actorId: args.actorId });
-  extractEvidence({ response: broadResponse, branch: args.branch, seen, sources });
+  extractEvidence({ response: broadResponse, branch: args.branch, seen, excludedSites, sources });
   if (sources.length >= 2) return sources;
 
   // Some narrow research angles yield a single result. Ask again for official guidance before declaring evidence insufficient.
@@ -77,6 +114,6 @@ export async function retrieveEvidence(args: { client: GroqClient; facts: PlanFa
     actorId: args.actorId,
     includeDomains: trustedDomains,
   });
-  extractEvidence({ response: trustedRetry, branch: args.branch, seen, sources });
+  extractEvidence({ response: trustedRetry, branch: args.branch, seen, excludedSites, sources });
   return sources;
 }
