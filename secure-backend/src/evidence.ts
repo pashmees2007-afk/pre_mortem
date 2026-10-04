@@ -29,6 +29,34 @@ export function siteKey(hostname: string) {
   return labels.slice(-keep).join(".");
 }
 
+// Two-letter language codes that documentation sites put first in a path (/id/docs, /es_es/..., /en-us/...).
+const LOCALE_LANGUAGES = new Set(["ar", "de", "en", "es", "fr", "he", "hi", "id", "it", "ja", "ko", "nl", "pl", "pt", "ru", "sv", "th", "tr", "uk", "vi", "zh"]);
+const LOCALE_SEGMENT = /^([a-z]{2})(?:[-_][a-z]{2,4})?$/i;
+
+function localeLanguage(url: URL) {
+  const first = url.pathname.split("/").find(Boolean) ?? "";
+  const language = LOCALE_SEGMENT.exec(first)?.[1]?.toLowerCase();
+  return language && LOCALE_LANGUAGES.has(language) ? language : null;
+}
+
+/** A page translated out of English (e.g. kubernetes.io/id/..., docs.aws.amazon.com/it_it/...). */
+export function isTranslatedPage(href: string) {
+  const language = localeLanguage(new URL(href));
+  return language !== null && language !== "en";
+}
+
+/**
+ * One key per document, so mirrors of the same page count once: the organisation-level site (which folds
+ * www., docs. and versioned hosts such as v1-32.docs.kubernetes.io together), the path without its
+ * language segment, and no query string, fragment or trailing slash.
+ */
+export function documentKey(href: string) {
+  const url = new URL(href);
+  const segments = url.pathname.split("/").filter(Boolean);
+  if (segments.length && localeLanguage(url)) segments.shift();
+  return `${siteKey(url.hostname)}/${segments.join("/")}`.toLowerCase();
+}
+
 export function tierOneDomainsFor(topic: EvidenceTopic, branch: Branch) {
   return TIER_ONE_BY_TOPIC[topic][branch];
 }
@@ -108,10 +136,13 @@ function extractEvidence(args: { response: WebSearchResponse; branch: Branch; se
   for (const [href, item] of collectRecords(response)) {
     const url = new URL(href);
     const { title, snippet } = item;
-    if (url.protocol !== "https:" || !title || snippet.length < 20 || seen.has(href) || excludedSites.has(siteKey(url.hostname))) continue;
+    const key = documentKey(href);
+    if (url.protocol !== "https:" || !title || snippet.length < 20 || seen.has(key) || excludedSites.has(siteKey(url.hostname))) continue;
+    // Plans and dashboards are in English; a translated copy is either a duplicate or unreadable to the reviewer.
+    if (isTranslatedPage(href)) continue;
     // A trusted search is a promise about domains, so it is enforced here rather than left to the provider.
     if (onlyDomains?.length && !onDomain(url.hostname, onlyDomains)) continue;
-    seen.add(href);
+    seen.add(key);
     sources.push({
       id: randomUUID(), branch, url: href, hostname: url.hostname.toLowerCase(),
       title: title.slice(0, 300), publisher: url.hostname.replace(/^www\./, "") || null,
