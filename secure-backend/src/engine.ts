@@ -249,7 +249,7 @@ export class PreMortemEngine {
         system: SYSTEM.normalize,
         user: dataBlock("PLAN_DATA", run.plan),
         actorId: run.requestedBy,
-        maxCompletionTokens: 400,
+        maxCompletionTokens: 800,
       });
 
       await this.repo.recordTrace({
@@ -267,7 +267,7 @@ export class PreMortemEngine {
         system: SYSTEM.planner,
         user: dataBlock("PLAN_FACTS", facts),
         actorId: run.requestedBy,
-        maxCompletionTokens: 400,
+        maxCompletionTokens: 700,
       });
       await this.repo.saveInvestigationPlan(run.id, investigationPlan);
       await this.repo.recordTrace({
