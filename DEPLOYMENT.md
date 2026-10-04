@@ -23,7 +23,7 @@ This deploys the backend (API + worker + Postgres + Redis) to **Railway** and th
    DATABASE_URL=${{Postgres.DATABASE_URL}}
    REDIS_URL=${{Redis.REDIS_URL}}
    GROQ_API_KEY=<your Groq key>
-   GROQ_RETRIEVAL_MODEL=groq/compound-mini
+   GROQ_RETRIEVAL_MODEL=openai/gpt-oss-120b
    GROQ_STRUCTURED_MODEL=qwen/qwen3.8-27b
    JWT_SECRET=<32+ char random string — generate with: node -e "console.log(require('crypto').randomBytes(32).toString('hex'))">
    JWT_ISSUER=premortem-api

@@ -149,3 +149,51 @@ describe("trusted evidence retrieval", () => {
     expect(webSearch.mock.calls[0]?.[0].includeDomains).not.toContain("fsb.org");
   });
 });
+
+describe("GPT-OSS browser_search evidence", () => {
+  // Real response shape: a titled search hit with empty content, then a separate browser.open record.
+  function browserResponse(hits: Array<{ url: string; title: string }>, opened: Array<{ url: string; host: string; lines: string[] }>) {
+    return { choices: [{ message: { executed_tools: [
+      { name: "browser.search", search_results: { results: hits.map((hit) => ({ ...hit, content: "", score: 0 })) } },
+      ...opened.map((page) => ({ name: "browser.open", search_results: { results: [{
+        url: page.url, title: `${page.host} - viewing lines [0 - 96] of 96`, score: 0,
+        content: ["L0: ", "L1: URL:", `L2: ${page.url}`, ...page.lines.map((line, index) => `L${index + 3}: ${line}`)].join("\n"),
+      }] } })),
+    ] } }] };
+  }
+  const rollback = "https://kubernetes.io/docs/reference/kubectl/generated/kubectl_rollout/kubectl_rollout_undo/";
+  const deployments = "https://kubernetes.io/docs/concepts/workloads/controllers/deployment/";
+
+  it("keeps opened pages, titled from the search hit, with line markers stripped from the snippet", async () => {
+    const webSearch = vi.fn().mockResolvedValue(browserResponse(
+      [{ url: rollback, title: "kubectl rollout undo" }, { url: deployments, title: "Deployments" }, { url: "https://learn.microsoft.com/en-us/azure/aks/", title: "AKS" }],
+      [
+        { url: rollback, host: "kubernetes.io", lines: ["kubectl rollout undo | Kubernetes", "", "## Synopsis", "Roll back to a previous rollout."] },
+        { url: deployments, host: "kubernetes.io", lines: ["A Deployment provides declarative updates for Pods and ReplicaSets."] },
+      ],
+    ));
+    const sources = await retrieveEvidence({ client: { webSearch } as unknown as GroqClient, facts, branch: "A", actorId: "actor", topic: "engineering" });
+
+    expect(sources.map((source) => source.url)).toEqual([rollback, deployments]);
+    expect(sources[0]?.title).toBe("kubectl rollout undo");
+    expect(sources[0]?.snippet).toBe("kubectl rollout undo | Kubernetes ## Synopsis Roll back to a previous rollout.");
+    expect(webSearch).toHaveBeenCalledTimes(1);
+  });
+
+  it("drops off-list domains from a trusted search because browser_search does not enforce the domain list", async () => {
+    const offList = "https://www.groundcover.com/learn/kubernetes/deployment-rollback";
+    const webSearch = vi.fn().mockResolvedValue(browserResponse(
+      [{ url: offList, title: "Kubernetes Deployment Rollback" }, { url: rollback, title: "kubectl rollout undo" }],
+      [
+        { url: offList, host: "www.groundcover.com", lines: ["Rollback strategies and best practices for Kubernetes deployments."] },
+        { url: rollback, host: "kubernetes.io", lines: ["Roll back to a previous rollout of a Deployment."] },
+      ],
+    ));
+    const sources = await retrieveEvidence({ client: { webSearch } as unknown as GroqClient, facts, branch: "A", actorId: "actor", topic: "engineering" });
+
+    // Trusted searches keep only kubernetes.io; the broad search may then use groundcover.com.
+    expect(sources.map((source) => source.hostname)).toEqual(["kubernetes.io", "www.groundcover.com"]);
+    expect(sources.map((source) => source.sourceTier)).toEqual([1, 3]);
+    expect(webSearch.mock.calls[1]?.[0].includeDomains).toBeUndefined();
+  });
+});

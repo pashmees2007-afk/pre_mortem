@@ -75,7 +75,7 @@ try {
     const searchResults = record && typeof record === "object" ? record.search_results : undefined;
     return Array.isArray(searchResults) ? searchResults : Array.isArray(searchResults?.results) ? searchResults.results : [];
   }) ?? [];
-  if (!retrieved.length) throw new Error("Compound Mini responded but returned no web-search records");
+  if (!retrieved.length) throw new Error(`${config.GROQ_RETRIEVAL_MODEL} responded but returned no web-search records`);
 
   const probe = {
     status: "key_verified",
@@ -84,7 +84,7 @@ try {
     retrievalModel: config.GROQ_RETRIEVAL_MODEL,
     qwenStructuredOutput: "passed",
     branchBStructuredOutput: modelB ? "passed" : "not separately configured",
-    compoundWebSearchRecords: retrieved.length,
+    webSearchRecords: retrieved.length,
   };
   if (!fullRun) {
     console.log(JSON.stringify(probe, null, 2));

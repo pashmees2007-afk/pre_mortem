@@ -12,6 +12,22 @@ export type GroqUsageTotals = { requests: number; promptTokens: number; completi
 
 type ResponseMode = "schema" | "object";
 
+const MAX_RATE_RETRY_WAIT_MS = 90_000;
+
+/** Compound models take `compound_custom`/`search_settings`; every other retrieval model uses the `browser_search` tool. */
+export function isCompoundModel(model: string) {
+  return model.startsWith("groq/compound") || model.startsWith("compound-");
+}
+
+/** Converts a Groq rate-limit hint such as "try again in 46.2s", "in 1m2.5s", or "in 450ms" to milliseconds. */
+export function retryHintMs(message: string): number | null {
+  const hint = message.match(/try again in\s+(?:(\d+)m(?!s))?\s*(\d+(?:\.\d+)?)\s*(ms|s|seconds?)/i);
+  if (!hint) return null;
+  const minutes = Number.parseInt(hint[1] ?? "0", 10);
+  const value = Number.parseFloat(hint[2] ?? "0");
+  return minutes * 60_000 + (hint[3]?.toLowerCase() === "ms" ? value : value * 1_000);
+}
+
 function parseJsonObject(text: string): unknown {
   try {
     return JSON.parse(text);
@@ -72,11 +88,9 @@ export class GroqClient {
     try {
       return await this.request(body);
     } catch (error) {
-      const hint = error instanceof UpstreamError ? error.message.match(/try again in\s+(\d+(?:\.\d+)?)\s*(ms|s|seconds?)/i) : null;
-      if (!hint) throw error;
-      const value = Number.parseFloat(hint[1] ?? "0");
-      const unit = hint[2]?.toLowerCase();
-      const hintedDelay = unit === "ms" ? value : value * 1_000;
+      const hintedDelay = error instanceof UpstreamError ? retryHintMs(error.message) : null;
+      // A per-minute (TPM) wait is worth one retry; a minutes-long daily-quota (TPD) wait would only stall the worker.
+      if (hintedDelay === null || hintedDelay > MAX_RATE_RETRY_WAIT_MS) throw error;
       const waitMs = this.config.NODE_ENV === "test" ? 0 : Math.max(1_000, Math.ceil(hintedDelay + 250));
       await new Promise<void>((resolve) => setTimeout(resolve, waitMs));
       return this.request(body);
@@ -90,7 +104,7 @@ export class GroqClient {
         authorization: `Bearer ${this.config.GROQ_API_KEY}`,
         "content-type": "application/json",
       };
-      if (body.model === this.config.GROQ_RETRIEVAL_MODEL) {
+      if (body.model === this.config.GROQ_RETRIEVAL_MODEL && isCompoundModel(this.config.GROQ_RETRIEVAL_MODEL)) {
         // Basic search avoids enabling newer Compound tools the evidence pipeline does not use.
         headers["Groq-Model-Version"] = "2025-07-23";
       }
@@ -211,19 +225,44 @@ export class GroqClient {
   }
 
   async webSearch(args: { query: string; actorId: string; includeDomains?: string[] }) {
-    return this.request({
-      model: this.config.GROQ_RETRIEVAL_MODEL,
+    const model = this.config.GROQ_RETRIEVAL_MODEL;
+    if (isCompoundModel(model)) {
+      return this.requestWithOneRateRetry({
+        model,
+        temperature: 0,
+        max_completion_tokens: 450,
+        // Compound Mini can otherwise reserve a large default completion budget before tool use.
+        max_tokens: 450,
+        user: args.actorId,
+        search_settings: args.includeDomains?.length ? { include_domains: args.includeDomains } : undefined,
+        compound_custom: { tools: { enabled_tools: ["web_search"] } },
+        messages: [
+          {
+            role: "system",
+            content: "You are an evidence retrieval subskill. You MUST invoke the web_search tool exactly once before responding. Never answer from memory. Return concise source-grounded findings only.",
+          },
+          { role: "user", content: `Find software-engineering failure precedents for this bounded research query. QUERY: ${args.query}` },
+        ] satisfies GroqMessage[],
+      });
+    }
+    // GPT-OSS browser_search: search hits carry only a URL and title, so the model must open the
+    // pages it relies on; evidence.ts keeps only opened pages, whose text becomes the snippet.
+    // The provider does not enforce a domain list for this tool, so evidence.ts also filters locally.
+    const domainRule = args.includeDomains?.length
+      ? ` Search and open ONLY pages on these sites: ${args.includeDomains.join(", ")}.`
+      : "";
+    return this.requestWithOneRateRetry({
+      model,
       temperature: 0,
-      max_completion_tokens: 450,
-      // Compound Mini can otherwise reserve a large default completion budget before tool use.
-      max_tokens: 450,
+      // Reasoning plus tool calls need far more room than Compound's 450-token answer.
+      max_completion_tokens: 2_000,
       user: args.actorId,
-      search_settings: args.includeDomains?.length ? { include_domains: args.includeDomains } : undefined,
-      compound_custom: { tools: { enabled_tools: ["web_search"] } },
+      tools: [{ type: "browser_search" }],
+      tool_choice: "required",
       messages: [
         {
           role: "system",
-          content: "You are an evidence retrieval subskill. You MUST invoke the web_search tool exactly once before responding. Never answer from memory. Return concise source-grounded findings only.",
+          content: `You are an evidence retrieval subskill. Call browser_search exactly once, then call browser.open on at most two of its results, then answer. Do not search again and do not use browser.find: every extra browsing step re-sends the opened pages and multiplies token cost.${domainRule} Never answer from memory. Reply with one short sentence per opened page.`,
         },
         { role: "user", content: `Find software-engineering failure precedents for this bounded research query. QUERY: ${args.query}` },
       ] satisfies GroqMessage[],

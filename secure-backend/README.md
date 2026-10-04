@@ -12,7 +12,7 @@ Every provider call has a server-defined prompt, bounded timeout, fixed model po
 
 Use Node.js 20.11 or later, PostgreSQL 15 or later, Redis 7 or later, and a Groq API key. This package uses PostgreSQL for tenant data/auditability and Redis/BullMQ for durable work dispatch.
 
-> **Provider boundary:** Groq Qwen (`qwen/qwen3.8-27b` by default) performs plan normalization, investigation planning, independent scenarios, comparison, evidence critique, risk synthesis, and mitigation assessment. Groq Compound Mini is restricted to source retrieval through its built-in web-search response. No provider key or model policy is exposed to the dashboard.
+> **Provider boundary:** Groq Qwen (`qwen/qwen3.8-27b` by default) performs plan normalization, investigation planning, independent scenarios, comparison, evidence critique, risk synthesis, and mitigation assessment. Groq GPT-OSS (`openai/gpt-oss-120b` by default) is restricted to source retrieval through its built-in `browser_search` tool; only pages it opens are retained, and Tier-1 searches are filtered to their domain list locally because the provider does not enforce it for this tool. Setting `GROQ_RETRIEVAL_MODEL` to a `groq/compound*` model switches retrieval to Compound web search instead. No provider key or model policy is exposed to the dashboard.
 
 The free-tier path stages the two independent Groq evidence searches rather than sending them together and uses Groq basic web search only. A full analysis has seven structured Qwen stages, and each mitigation a user submits adds one more for control assessment. Every typed Qwen request carries its exact output contract and an example shape for its short intermediary stage. Compact stages—comparison, evidence critique, and mitigation classification—use JSON-object mode from the first call to avoid native-schema rejection, receive only the fields needed for their decision, and have enough completion budget to finish their object. The client accepts an otherwise-valid JSON object after an accidental prose prefix, then validates it locally with Zod. For a wrong shape or truncated JSON response, it asks once for a fresh contract-constrained response that names the failed fields, then allows one schema repair pass. If a completed comparison, critic, synthesis, or mitigation classification remains invalid, PreMortem records an **attention** trace and uses a clearly labelled deterministic, evidence-preserving fallback rather than hiding the limitation or fabricating evidence. The queue never restarts the full job after a provider failure, preventing completed stages from being duplicated. This intentionally trades a little latency for a more reliable, no-cost hackathon demo. Groq rate limits remain enforced per model and organization.
 
@@ -66,7 +66,7 @@ pnpm test
 
 ### Replacement Groq key verification runner
 
-Use this **local-only** runner after creating a replacement Groq key. It validates Qwen typed JSON and Compound Mini web-search access without printing the API key. It uses the same backend client, model policy, validation, and evidence logic as the production workflow.
+Use this **local-only** runner after creating a replacement Groq key. It validates Qwen typed JSON and retrieval-model web-search access without printing the API key. It uses the same backend client, model policy, validation, and evidence logic as the production workflow.
 
 ```bash
 export GROQ_API_KEY="new key in your local shell only"
@@ -79,7 +79,7 @@ export DEV_ORG_ID="organization UUID"
 export DEV_USER_ID="user UUID"
 export DEV_PROJECT_ID="project UUID"
 
-pnpm verify:groq            # verifies Qwen and Compound Mini only
+pnpm verify:groq            # verifies Qwen and the retrieval model only
 pnpm verify:groq -- --full  # submits a fresh full local analysis and prints a safe summary
 ```
 

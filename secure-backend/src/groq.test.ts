@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import type { Config } from "./config.js";
-import { GroqClient } from "./groq.js";
+import { GroqClient, retryHintMs } from "./groq.js";
 
 const config: Config = {
   NODE_ENV: "test", PORT: 3000, DATABASE_URL: "postgres://localhost/test", REDIS_URL: "redis://localhost:6379",
@@ -122,5 +122,53 @@ describe("GroqClient structured reasoning", () => {
     const client = new GroqClient(config);
     await client.strictJson({ name: "plan_facts", schema, output: Output, system: "system", user: "plan", actorId: "actor" });
     expect(client.getUsage()).toEqual({ requests: 1, promptTokens: 0, completionTokens: 0, totalTokens: 0 });
+  });
+});
+
+describe("GroqClient web search", () => {
+  const searchResponse = { choices: [{ message: { content: "findings", executed_tools: [] } }] };
+
+  it("uses the browser_search tool for a GPT-OSS retrieval model, without Compound-only fields", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify(searchResponse), { status: 200 }));
+    await new GroqClient({ ...config, GROQ_RETRIEVAL_MODEL: "openai/gpt-oss-20b" }).webSearch({ query: "rollback", actorId: "actor", includeDomains: ["kubernetes.io"] });
+    const init = fetchMock.mock.calls[0]?.[1];
+    const body = JSON.parse(String(init?.body));
+    expect(body).toMatchObject({ model: "openai/gpt-oss-20b", tools: [{ type: "browser_search" }], tool_choice: "required" });
+    expect(body.compound_custom).toBeUndefined();
+    expect(body.search_settings).toBeUndefined();
+    expect(body.messages[0].content).toContain("kubernetes.io");
+    expect((init?.headers as Record<string, string>)["Groq-Model-Version"]).toBeUndefined();
+  });
+
+  it("keeps the Compound web_search request for a groq/compound retrieval model", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify(searchResponse), { status: 200 }));
+    await new GroqClient(config).webSearch({ query: "rollback", actorId: "actor", includeDomains: ["kubernetes.io"] });
+    const init = fetchMock.mock.calls[0]?.[1];
+    const body = JSON.parse(String(init?.body));
+    expect(body).toMatchObject({ model: "groq/compound-mini", search_settings: { include_domains: ["kubernetes.io"] }, compound_custom: { tools: { enabled_tools: ["web_search"] } } });
+    expect(body.tools).toBeUndefined();
+    expect((init?.headers as Record<string, string>)["Groq-Model-Version"]).toBe("2025-07-23");
+  });
+
+  it("retries one web search after the provider's token-rate retry hint", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: { message: "Rate limit reached for model openai/gpt-oss-20b. Please try again in 1m2.5s." } }), { status: 429 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(searchResponse), { status: 200 }));
+    await new GroqClient({ ...config, GROQ_RETRIEVAL_MODEL: "openai/gpt-oss-20b" }).webSearch({ query: "rollback", actorId: "actor" });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("fails fast instead of waiting out a daily-quota hint measured in minutes", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: { message: "Rate limit reached on tokens per day (TPD). Please try again in 4m45.984s." } }), { status: 429 }));
+    await expect(new GroqClient({ ...config, GROQ_RETRIEVAL_MODEL: "openai/gpt-oss-20b" }).webSearch({ query: "rollback", actorId: "actor" })).rejects.toThrow("tokens per day");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("reads minute, second, and millisecond retry hints", () => {
+    expect(retryHintMs("Please try again in 1m2.5s.")).toBe(62_500);
+    expect(retryHintMs("Please try again in 46.252s.")).toBeCloseTo(46_252);
+    expect(retryHintMs("Please try again in 450ms.")).toBe(450);
+    expect(retryHintMs("Please try again later.")).toBeNull();
   });
 });

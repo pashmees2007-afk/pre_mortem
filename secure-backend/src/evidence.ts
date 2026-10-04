@@ -55,8 +55,28 @@ function branchQuery(facts: PlanFacts, branch: Branch, plannedQuery?: string) {
   return `${facts.outcome} engineering project failure postmortem ${focus}`.slice(0, 900);
 }
 
-function extractEvidence(args: { response: Awaited<ReturnType<GroqClient["webSearch"]>>; branch: Branch; seen: Set<string>; excludedSites: Set<string>; sources: EvidenceSource[] }) {
-  const { response, branch, seen, excludedSites, sources } = args;
+// GPT-OSS browser_search labels an opened page "<host> - viewing lines [0 - 96] of 96" and prefixes each line with "L12: ".
+const PAGE_VIEW_TITLE = /\s-\sviewing lines \[\d+ - \d+\] of \d+$/;
+
+function pageText(raw: string) {
+  return raw.split("\n")
+    .map((line) => line.replace(/^L\d+:\s?/, "").trim())
+    .filter((line) => line && line !== "URL:" && !/^(URL:\s*)?https?:\/\/\S+$/.test(line))
+    .join(" ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function onDomain(hostname: string, domains: string[]) {
+  const host = hostname.toLowerCase().replace(/^www\./, "");
+  return domains.some((domain) => host === domain || host.endsWith(`.${domain}`));
+}
+
+type RawRecord = { title: string; snippet: string; score: number | null };
+
+/** Merges every tool record for one URL: Compound returns title and content together, while GPT-OSS
+ * returns a titled but empty search hit and, separately, the opened page's text. */
+function collectRecords(response: Awaited<ReturnType<GroqClient["webSearch"]>>) {
   const tools = response.choices?.[0]?.message?.executed_tools ?? [];
   const raw = tools.flatMap((tool: any) => {
     const searchResults = tool?.search_results;
@@ -64,22 +84,41 @@ function extractEvidence(args: { response: Awaited<ReturnType<GroqClient["webSea
     if (Array.isArray(searchResults?.results)) return searchResults.results;
     return [];
   });
-  const now = new Date().toISOString();
+  const records = new Map<string, RawRecord>();
   for (const item of raw) {
     try {
-      const url = new URL(String(item.url));
-      const title = String(item.title ?? "").trim();
-      const snippet = String(item.content ?? item.snippet ?? "").trim();
-      if (url.protocol !== "https:" || !title || snippet.length < 20 || seen.has(url.toString()) || excludedSites.has(siteKey(url.hostname))) continue;
-      seen.add(url.toString());
-      sources.push({
-        id: randomUUID(), branch, url: url.toString(), hostname: url.hostname.toLowerCase(),
-        title: title.slice(0, 300), publisher: url.hostname.replace(/^www\./, "") || null,
-        snippet: snippet.slice(0, 1_500), providerRank: typeof item.score === "number" ? item.score : null,
-        sourceTier: classifyTier(url.hostname.toLowerCase()), status: "retrieved", retrievedAt: now,
-      });
-      if (sources.length === 8) break;
+      const url = new URL(String(item.url)).toString();
+      const rawTitle = String(item.title ?? "").trim();
+      const title = PAGE_VIEW_TITLE.test(rawTitle) ? "" : rawTitle;
+      const snippet = pageText(String(item.content ?? item.snippet ?? ""));
+      const score = typeof item.score === "number" ? item.score : null;
+      const existing = records.get(url);
+      if (!existing) { records.set(url, { title, snippet, score }); continue; }
+      if (!existing.title) existing.title = title;
+      if (snippet.length > existing.snippet.length) existing.snippet = snippet;
+      existing.score ??= score;
     } catch { /* discard malformed provider records */ }
+  }
+  return records;
+}
+
+function extractEvidence(args: { response: Awaited<ReturnType<GroqClient["webSearch"]>>; branch: Branch; seen: Set<string>; excludedSites: Set<string>; sources: EvidenceSource[]; onlyDomains?: string[] }) {
+  const { response, branch, seen, excludedSites, sources, onlyDomains } = args;
+  const now = new Date().toISOString();
+  for (const [href, item] of collectRecords(response)) {
+    const url = new URL(href);
+    const { title, snippet } = item;
+    if (url.protocol !== "https:" || !title || snippet.length < 20 || seen.has(href) || excludedSites.has(siteKey(url.hostname))) continue;
+    // A trusted search is a promise about domains, so it is enforced here rather than left to the provider.
+    if (onlyDomains?.length && !onDomain(url.hostname, onlyDomains)) continue;
+    seen.add(href);
+    sources.push({
+      id: randomUUID(), branch, url: href, hostname: url.hostname.toLowerCase(),
+      title: title.slice(0, 300), publisher: url.hostname.replace(/^www\./, "") || null,
+      snippet: snippet.slice(0, 1_500), providerRank: item.score,
+      sourceTier: classifyTier(url.hostname.toLowerCase()), status: "retrieved", retrievedAt: now,
+    });
+    if (sources.length === 8) break;
   }
 }
 
@@ -100,7 +139,7 @@ export async function retrieveEvidence(args: {
   const sources: EvidenceSource[] = [];
   const trustedQuery = `Find official guidance, control expectations, engineering documentation, production guidance, or incident learning relevant to this project-risk question. ${query}`;
   const trustedResponse = await args.client.webSearch({ query: trustedQuery, actorId: args.actorId, includeDomains: trustedDomains });
-  extractEvidence({ response: trustedResponse, branch: args.branch, seen, excludedSites, sources });
+  extractEvidence({ response: trustedResponse, branch: args.branch, seen, excludedSites, sources, onlyDomains: trustedDomains });
   if (sources.length >= 2) return sources;
 
   // Tier-1 material is prioritised, not fabricated: broad search fills only the remaining evidence slots.
@@ -114,6 +153,6 @@ export async function retrieveEvidence(args: {
     actorId: args.actorId,
     includeDomains: trustedDomains,
   });
-  extractEvidence({ response: trustedRetry, branch: args.branch, seen, excludedSites, sources });
+  extractEvidence({ response: trustedRetry, branch: args.branch, seen, excludedSites, sources, onlyDomains: trustedDomains });
   return sources;
 }

@@ -221,8 +221,8 @@ export class PreMortemEngine {
         metadata: { angles: investigationPlan.angles, queries: investigationPlan.researchQueries },
       });
 
-      // Compound Mini's free-tier backing model has an 8K TPM quota. A pair of concurrent
-      // searches can reserve more than that together, so these independent branches are
+      // The retrieval model's free tier has an 8K TPM quota, and one GPT-OSS browser search alone can
+      // consume most of it (opened pages count as prompt tokens), so these independent branches are
       // deliberately staged. They remain independent; only provider scheduling is serialized.
       const evidenceTopic = evidenceTopicFor(facts, [investigationPlan.researchQueries.A, investigationPlan.researchQueries.B]);
       const evidenceA = await retrieveEvidence({
