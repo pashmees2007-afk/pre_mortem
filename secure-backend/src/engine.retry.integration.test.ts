@@ -31,8 +31,9 @@ function scenario(category: "scope_control" | "architecture_reliability", eviden
   };
 }
 
+// Prompts cite evidence by short label (E1, E2, ...), never by UUID; the mock answers the same way a model would.
 function idsFromPrompt(user: string) {
-  return [...user.matchAll(/[0-9a-f]{8}-[0-9a-f-]{27,}/gi)].map((match) => match[0]).slice(0, 2);
+  return [...user.matchAll(/"id":"(E\d+)"/g)].map((match) => match[1]!).slice(0, 2);
 }
 
 // One result list for every search: the branch split must hand A and B different publishers from it.
@@ -92,7 +93,7 @@ describe("engine retry recovery", () => {
 
     const traces = repo.recordTrace.mock.calls.map((call) => call[0] as { skill: string; status: string; metadata?: Record<string, unknown> });
     expect(traces.find((event) => event.skill === "Research Skill")).toMatchObject({ status: "completed", metadata: { sharedSites: [] } });
-    expect(traces.find((event) => event.skill === "Independent Scenario Agents")?.metadata).toEqual({ models: { A: "qwen/qwen3.8-27b", B: "second/model-family" }, distinctModels: true });
+    expect(traces.find((event) => event.skill === "Independent Scenario Agents")?.metadata).toEqual({ models: { A: "qwen/qwen3.8-27b", B: "second/model-family" }, distinctModels: true, fallback: false, fallbackBranches: [] });
     const scenarioModels = groq.strictJson.mock.calls
       .map(([args]: [{ name: string; model?: string }]) => args)
       .filter((args) => args.name.startsWith("scenario_") && args.name !== "scenario_comparison")
@@ -108,6 +109,10 @@ describe("engine retry recovery", () => {
       expect.objectContaining({ name: "evidence_critic", responseMode: "object" }),
       expect.objectContaining({ name: "risk_synthesis", responseMode: "object" }),
     ]));
+    const uuid = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
+    for (const args of groq.strictJson.mock.calls.map(([call]) => call as { name: string; user: string })) {
+      if (args.name.startsWith("scenario_") || args.name === "evidence_critic" || args.name === "risk_synthesis") expect(args.user).not.toMatch(uuid);
+    }
     expect(compactStages.find((args) => args.name === "scenario_comparison")?.user).not.toContain('"narrative"');
     expect(compactStages.find((args) => args.name === "evidence_critic")?.user).not.toContain('"url"');
     expect(compactStages.find((args) => args.name === "risk_synthesis")?.user).not.toContain('"narrative"');

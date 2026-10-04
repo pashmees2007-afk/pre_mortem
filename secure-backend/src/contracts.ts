@@ -57,6 +57,10 @@ export const RiskCategory = z.enum([
 export const Uncertainty = z.enum(["low", "moderate", "high"]);
 export const ControlEvidence = z.enum(["verified", "partial", "unverified", "absent"]);
 
+// What the model writes in place of evidence UUIDs: a short label from the cards it was given (E1, E2, ...).
+// Long UUIDs were sometimes garbled when copied back, failing a run; engine.ts maps labels to IDs.
+export const EvidenceLabel = z.string().regex(/^E[1-9]\d?$/, "Evidence label must look like E1");
+
 export const InvestigationPlanSchema = z.object({
   summary: z.string().min(20).max(400),
   angles: z.array(z.object({
@@ -156,6 +160,16 @@ export const ControlAssessmentSchema = z.object({
   evidence: ControlEvidence,
   rationale: z.string().min(20).max(400),
   gaps: z.array(z.string().min(4).max(180)).max(5),
+}).strict();
+
+/** Scenario as the model returns it: evidence cited by label. */
+export const ModelScenarioSchema = ScenarioSchema.extend({
+  claims: z.array(ClaimSchema.extend({ evidenceIds: z.array(EvidenceLabel).min(1).max(3) })).min(1).max(4),
+});
+
+/** Risk register as the model returns it: evidence cited by label. */
+export const ModelSynthesisSchema = z.object({
+  risks: z.array(SynthesisSchema.shape.risks.element.extend({ evidenceIds: z.array(EvidenceLabel).min(1).max(4) })).min(3).max(6),
 }).strict();
 
 export type PlanFacts = z.infer<typeof PlanFactsSchema>;

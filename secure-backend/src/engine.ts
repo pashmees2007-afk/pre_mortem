@@ -5,9 +5,10 @@ import {
   CriticSchema,
   EvidenceSourceSchema,
   InvestigationPlanSchema,
+  ModelScenarioSchema,
+  ModelSynthesisSchema,
   PlanFactsSchema,
   ScenarioSchema,
-  SynthesisSchema,
   type Comparison,
   type CriticFinding,
   type EvidenceSource,
@@ -24,12 +25,33 @@ import { SYSTEM, dataBlock } from "./prompts.js";
 import { type Repository } from "./repository.js";
 import { classifyComparison, rescoreSeverity } from "./scoring.js";
 
-function evidenceCards(sources: EvidenceSource[]) {
+/**
+ * Short labels (E1, E2, ...) that stand in for evidence UUIDs in every prompt. Models copied long UUIDs back
+ * inaccurately often enough to fail runs; a label is easy to copy and is mapped back to its ID in code.
+ */
+export function labelEvidence(sources: EvidenceSource[]) {
+  const toLabel = new Map(sources.map((source, index) => [source.id, `E${index + 1}`]));
+  const toId = new Map([...toLabel].map(([id, label]) => [label, id]));
+  return { toLabel, toId };
+}
+type EvidenceLabels = ReturnType<typeof labelEvidence>;
+
+/** The evidence IDs behind a model's labels, or an UpstreamError if it cited a label it was not given. */
+function resolveEvidenceLabels(cited: string[], labels: EvidenceLabels, allowedSources: EvidenceSource[]) {
+  const allowed = new Set(allowedSources.map((source) => source.id));
+  return cited.map((label) => {
+    const id = labels.toId.get(label);
+    if (!id || !allowed.has(id)) throw new UpstreamError(`The analysis provider cited evidence label ${label}, which was not among its sources`);
+    return id;
+  });
+}
+
+function evidenceCards(sources: EvidenceSource[], labels: EvidenceLabels) {
   return sources.filter((source) => source.status === "retrieved" && source.sourceTier < 4)
     .sort((left, right) => left.sourceTier - right.sourceTier)
     .slice(0, 4)
     .map((source) => ({
-    id: source.id,
+    id: labels.toLabel.get(source.id),
     title: source.title,
     publisher: source.publisher,
     snippet: source.snippet.slice(0, 360),
@@ -37,7 +59,7 @@ function evidenceCards(sources: EvidenceSource[]) {
   }));
 }
 
-function comparisonCard(scenario: Scenario) {
+function comparisonCard(scenario: Scenario, labels: EvidenceLabels) {
   return {
     primaryCategory: scenario.primaryCategory,
     contributingCategories: scenario.contributingCategories,
@@ -45,7 +67,7 @@ function comparisonCard(scenario: Scenario) {
     claims: scenario.claims.map((claim) => ({
       category: claim.category,
       statement: claim.statement,
-      evidenceIds: claim.evidenceIds,
+      evidenceIds: claim.evidenceIds.map((id) => labels.toLabel.get(id)),
       impact: claim.impact,
       likelihood: claim.likelihood,
       uncertainty: claim.uncertainty,
@@ -53,9 +75,9 @@ function comparisonCard(scenario: Scenario) {
   };
 }
 
-function criticEvidenceCards(sources: EvidenceSource[]) {
+function criticEvidenceCards(sources: EvidenceSource[], labels: EvidenceLabels) {
   return sources.filter((source) => source.status === "retrieved" && source.sourceTier < 4).map((source) => ({
-    id: source.id,
+    id: labels.toLabel.get(source.id),
     branch: source.branch,
     tier: source.sourceTier,
     title: source.title,
@@ -63,13 +85,13 @@ function criticEvidenceCards(sources: EvidenceSource[]) {
   }));
 }
 
-function synthesisEvidenceCards(sources: EvidenceSource[], scenarios: Scenario[]) {
+function synthesisEvidenceCards(sources: EvidenceSource[], scenarios: Scenario[], labels: EvidenceLabels) {
   const citedEvidenceIds = new Set(scenarios.flatMap((scenario) => scenario.claims.flatMap((claim) => claim.evidenceIds)));
   return sources.filter((source) => citedEvidenceIds.has(source.id))
     .sort((left, right) => left.sourceTier - right.sourceTier)
     .slice(0, 6)
     .map((source) => ({
-      id: source.id,
+      id: labels.toLabel.get(source.id),
       branch: source.branch,
       tier: source.sourceTier,
       title: source.title,
@@ -122,6 +144,33 @@ function fallbackCritic(args: { plan: InvestigationPlan; comparison: Comparison;
     evidenceGaps,
     nextCheck: `Ask the accountable owner to validate the highest-impact control before release, focusing on the ${args.plan.angles[0]?.category ?? "identified"} risk angle.`,
   };
+}
+
+/**
+ * A scenario built from the plan's own facts when the model's scenario cannot be validated, so one bad
+ * response no longer fails the whole run. Each claim cites this branch's own retrieved evidence, and the
+ * narrative says plainly that the scenario is rule-based with conservative default scores.
+ */
+export function fallbackScenario(args: { branch: "A" | "B"; facts: PlanFacts; plan: InvestigationPlan; evidence: EvidenceSource[] }): Scenario | null {
+  const cited = args.evidence.filter((source) => source.status === "retrieved" && source.sourceTier < 4)
+    .sort((left, right) => left.sourceTier - right.sourceTier).slice(0, 3);
+  if (!cited.length) return null;
+  const category = args.plan.angles.find((angle) => angle.branch === args.branch)?.category ?? "operational_readiness";
+  const gaps = args.facts.missingControls.length ? args.facts.missingControls.slice(0, 3) : [`a verified control for: ${args.facts.outcome}`];
+  return ScenarioSchema.parse({
+    primaryCategory: category,
+    contributingCategories: [],
+    rootCause: `The plan does not yet show ${gaps[0]}.`.slice(0, 180),
+    narrative: `Rule-based scenario for branch ${args.branch}: the model's scenario could not be validated, so this one is built from the plan's own facts. The plan (${args.facts.outcome}, ${args.facts.timeline}) lists these missing controls: ${gaps.join("; ")}. Each claim cites a source this branch retrieved; impact and likelihood are conservative defaults, not model estimates.`.slice(0, 1_200),
+    claims: gaps.map((gap, index) => ({
+      category,
+      statement: `The plan does not yet show ${gap}.`.slice(0, 320),
+      evidenceIds: [cited[index % cited.length]!.id],
+      impact: 4,
+      likelihood: 3,
+      uncertainty: "high",
+    })),
+  });
 }
 
 function fallbackSynthesis(a: Scenario, b: Scenario, comparison: Comparison): Synthesis {
@@ -282,8 +331,20 @@ export class PreMortemEngine {
       // independent because they receive separate evidence and do not exchange outputs.
       const modelA = this.config.GROQ_STRUCTURED_MODEL;
       const modelB = this.config.GROQ_STRUCTURED_MODEL_B ?? modelA;
-      const scenarioA = await this.createScenario(run.plan, facts, sources.left, "A", run.requestedBy, modelA);
-      const scenarioB = await this.createScenario(run.plan, facts, sources.right, "B", run.requestedBy, modelB);
+      const labels = labelEvidence(sources.stored);
+      const scenarioFallbacks: Array<"A" | "B"> = [];
+      const scenarioFor = async (evidence: EvidenceSource[], branch: "A" | "B", model: string) => {
+        try {
+          return await this.createScenario(run.plan, facts, evidence, branch, run.requestedBy, model, labels);
+        } catch (error) {
+          const fallback = error instanceof UpstreamError ? fallbackScenario({ branch, facts, plan: investigationPlan, evidence }) : null;
+          if (!fallback) throw error;
+          scenarioFallbacks.push(branch);
+          return fallback;
+        }
+      };
+      const scenarioA = await scenarioFor(sources.left, "A", modelA);
+      const scenarioB = await scenarioFor(sources.right, "B", modelB);
       let semantic: Pick<Comparison, "semanticRelation" | "explanation">;
       let usedComparatorFallback = false;
       try {
@@ -292,7 +353,7 @@ export class PreMortemEngine {
           schema: (await import("./contracts.js")).jsonSchemas.comparator,
           output: ComparatorSchema,
           system: SYSTEM.comparator,
-          user: [dataBlock("SCENARIO_A", comparisonCard(scenarioA)), dataBlock("SCENARIO_B", comparisonCard(scenarioB))].join("\n"),
+          user: [dataBlock("SCENARIO_A", comparisonCard(scenarioA, labels)), dataBlock("SCENARIO_B", comparisonCard(scenarioB, labels))].join("\n"),
           actorId: run.requestedBy,
           maxCompletionTokens: 550,
           responseMode: "object",
@@ -308,11 +369,11 @@ export class PreMortemEngine {
         runId: run.id,
         skill: "Independent Scenario Agents",
         stage: "form_failure_hypotheses",
-        status: "completed",
-        detail: modelA === modelB
+        status: scenarioFallbacks.length ? "attention" : "completed",
+        detail: `${modelA === modelB
           ? `Produced two evidence-limited failure narratives before synthesis; both branches used the same model (${modelA}).`
-          : `Produced two evidence-limited failure narratives before synthesis, written by different models (branch A: ${modelA}; branch B: ${modelB}).`,
-        metadata: { models: { A: modelA, B: modelB }, distinctModels: modelA !== modelB },
+          : `Produced two evidence-limited failure narratives before synthesis, written by different models (branch A: ${modelA}; branch B: ${modelB}).`}${scenarioFallbacks.length ? ` The model's scenario for branch ${scenarioFallbacks.join(" and ")} could not be validated, so a rule-based scenario built from the plan's facts was used.` : ""}`,
+        metadata: { models: { A: modelA, B: modelB }, distinctModels: modelA !== modelB, fallback: scenarioFallbacks.length > 0, fallbackBranches: scenarioFallbacks },
       });
       await this.repo.recordTrace({
         runId: run.id,
@@ -335,10 +396,10 @@ export class PreMortemEngine {
           user: [
             dataBlock("PLAN_FACTS", facts),
             dataBlock("INVESTIGATION_PLAN", investigationPlan),
-            dataBlock("SCENARIO_A", comparisonCard(scenarioA)),
-            dataBlock("SCENARIO_B", comparisonCard(scenarioB)),
+            dataBlock("SCENARIO_A", comparisonCard(scenarioA, labels)),
+            dataBlock("SCENARIO_B", comparisonCard(scenarioB, labels)),
             dataBlock("COMPARISON", comparison),
-            dataBlock("ALLOWED_EVIDENCE", criticEvidenceCards(allowedEvidence)),
+            dataBlock("ALLOWED_EVIDENCE", criticEvidenceCards(allowedEvidence, labels)),
           ].join("\n"),
           actorId: run.requestedBy,
           maxCompletionTokens: 650,
@@ -361,21 +422,23 @@ export class PreMortemEngine {
       let synthesis: Synthesis;
       let usedSynthesisFallback = false;
       try {
-        synthesis = await this.groq.strictJson({
+        const labelled = await this.groq.strictJson({
           name: "risk_synthesis",
           schema: (await import("./contracts.js")).jsonSchemas.synthesis,
-          output: SynthesisSchema,
+          output: ModelSynthesisSchema,
           system: SYSTEM.synthesis,
           user: [
-            dataBlock("SCENARIO_A", comparisonCard(scenarioA)),
-            dataBlock("SCENARIO_B", comparisonCard(scenarioB)),
+            dataBlock("SCENARIO_A", comparisonCard(scenarioA, labels)),
+            dataBlock("SCENARIO_B", comparisonCard(scenarioB, labels)),
             dataBlock("COMPARISON", comparison),
-            dataBlock("ALLOWED_EVIDENCE", synthesisEvidenceCards(allowedEvidence, [scenarioA, scenarioB])),
+            dataBlock("ALLOWED_EVIDENCE", synthesisEvidenceCards(allowedEvidence, [scenarioA, scenarioB], labels)),
           ].join("\n"),
           actorId: run.requestedBy,
           maxCompletionTokens: 1_000,
           responseMode: "object",
         });
+        // An unknown label is treated like any other invalid synthesis: the evidence-preserving fallback is used.
+        synthesis = { risks: labelled.risks.map((risk) => ({ ...risk, evidenceIds: resolveEvidenceLabels(risk.evidenceIds, labels, allowedEvidence) })) };
       } catch (error) {
         if (!(error instanceof UpstreamError)) throw error;
         synthesis = fallbackSynthesis(scenarioA, scenarioB, comparison);
@@ -414,19 +477,19 @@ export class PreMortemEngine {
     }
   }
 
-  private async createScenario(plan: string, facts: unknown, evidence: EvidenceSource[], branch: "A" | "B", actorId: string, model: string) {
-    const scenario = await this.groq.strictJson({
+  private async createScenario(plan: string, facts: unknown, evidence: EvidenceSource[], branch: "A" | "B", actorId: string, model: string, labels: EvidenceLabels): Promise<Scenario> {
+    const labelled = await this.groq.strictJson({
       model,
       name: `scenario_${branch.toLowerCase()}`,
       schema: (await import("./contracts.js")).jsonSchemas.scenario,
-      output: ScenarioSchema,
+      output: ModelScenarioSchema,
       system: SYSTEM.scenario(branch),
-      user: [dataBlock("PLAN_DATA", plan), dataBlock("PLAN_FACTS", facts), dataBlock("EVIDENCE_CARDS", evidenceCards(evidence))].join("\n"),
+      user: [dataBlock("PLAN_DATA", plan), dataBlock("PLAN_FACTS", facts), dataBlock("EVIDENCE_CARDS", evidenceCards(evidence, labels))].join("\n"),
       actorId,
       maxCompletionTokens: 700,
     });
-    for (const claim of scenario.claims) assertEvidenceReferences(claim.evidenceIds, evidence);
-    return scenario;
+    // A branch may cite only its own evidence; resolving against `evidence` enforces that as before.
+    return { ...labelled, claims: labelled.claims.map((claim) => ({ ...claim, evidenceIds: resolveEvidenceLabels(claim.evidenceIds, labels, evidence) })) };
   }
 
   async assessMitigation(args: { riskId: string; actor: { sub: string; org_id: string; role: "member" | "admin" }; answer: string }) {
