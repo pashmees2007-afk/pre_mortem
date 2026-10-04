@@ -1,4 +1,4 @@
-# Deploying Pre-Mortem
+# Deploying PreMortem
 
 This deploys the backend (API + worker + Postgres + Redis) to **Railway** and the dashboard to **Vercel**. Both have free tiers sufficient for a hackathon demo. Total time: ~20 minutes.
 
