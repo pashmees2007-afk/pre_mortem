@@ -4,7 +4,7 @@ import { createContainer } from "./container.js";
 const container = createContainer();
 const app = createApp(container);
 const server = app.listen(container.config.PORT, () => {
-  console.log(`Pre-Mortem API listening on port ${container.config.PORT}`);
+  console.log(`PreMortem API listening on port ${container.config.PORT}`);
 });
 
 async function shutdown() {
