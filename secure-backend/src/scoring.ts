@@ -9,6 +9,26 @@ export function scoreSeverity(impact: number, likelihood: number): 1 | 2 | 3 | 4
   return 1;
 }
 
+/** The synthesis prompt allows at most this many risks with impact x likelihood of 20 or more (severity 5). */
+export const MAX_TOP_RISKS = 2;
+
+/**
+ * The model does not always keep to that limit, so it is enforced here. Risks are ranked by impact x likelihood,
+ * then by impact, then by the model's own order; any risk past the limit keeps its impact and has its likelihood
+ * lowered just enough to score below 20. The returned risks keep their original order.
+ */
+export function capTopRisks<T extends { impact: number; likelihood: number }>(risks: T[], max = MAX_TOP_RISKS): { risks: T[]; capped: number } {
+  const ranked = risks.map((risk, index) => ({ risk, index }))
+    .filter(({ risk }) => risk.impact * risk.likelihood >= 20)
+    .sort((left, right) => right.risk.impact * right.risk.likelihood - left.risk.impact * left.risk.likelihood
+      || right.risk.impact - left.risk.impact || left.index - right.index);
+  const lowered = new Set(ranked.slice(max).map(({ index }) => index));
+  return {
+    risks: risks.map((risk, index) => lowered.has(index) ? { ...risk, likelihood: Math.floor(19 / risk.impact) } : risk),
+    capped: lowered.size,
+  };
+}
+
 export function rescoreSeverity(before: number, evidence: "verified" | "partial" | "unverified" | "absent") {
   const delta = evidence === "verified" ? -2 : evidence === "partial" ? -1 : 0;
   const after = Math.max(1, Math.min(5, before + delta)) as 1 | 2 | 3 | 4 | 5;
