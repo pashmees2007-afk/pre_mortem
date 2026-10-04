@@ -83,6 +83,41 @@ describe("GroqClient structured reasoning", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
+  it("adds reasoning headroom and a low reasoning effort for a GPT-OSS structured model", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify(validResponse), { status: 200 }));
+    await new GroqClient(config).strictJson({ model: "openai/gpt-oss-120b", name: "plan_facts", schema, output: Output, system: "system", user: "plan", actorId: "actor", maxCompletionTokens: 80 });
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toMatchObject({ model: "openai/gpt-oss-120b", max_completion_tokens: 880, reasoning_effort: "low" });
+  });
+
+  it("keeps Qwen's stage budget unchanged and sends no reasoning effort", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify(validResponse), { status: 200 }));
+    await new GroqClient(config).strictJson({ name: "plan_facts", schema, output: Output, system: "system", user: "plan", actorId: "actor", maxCompletionTokens: 700 });
+    const body = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
+    expect(body.max_completion_tokens).toBe(700);
+    expect(body).not.toHaveProperty("reasoning_effort");
+  });
+
+  it("regenerates once when the provider cannot finish a JSON object in schema or object mode", async () => {
+    const budgetExhausted = () => new Response(JSON.stringify({ error: { message: "Failed to validate JSON. Please adjust your prompt. See 'failed_generation' for more details." } }), { status: 400 });
+    const fetchMock = vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(budgetExhausted())
+      .mockResolvedValueOnce(budgetExhausted())
+      .mockResolvedValueOnce(new Response(JSON.stringify(validResponse), { status: 200 }));
+    await expect(new GroqClient(config).strictJson({ model: "openai/gpt-oss-120b", name: "plan_facts", schema, output: Output, system: "system", user: "plan", actorId: "actor", maxCompletionTokens: 700 }))
+      .resolves.toEqual({ outcome: "Ship integration", dependencies: ["gateway"] });
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(JSON.parse(String(fetchMock.mock.calls[2]?.[1]?.body))).toMatchObject({ response_format: { type: "json_object" }, reasoning_effort: "low" });
+  });
+
+  it("regenerates once when the provider reports it could not generate JSON", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: { message: "Failed to generate JSON. Please adjust your prompt." } }), { status: 400 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(validResponse), { status: 200 }));
+    await expect(new GroqClient(config).strictJson({ model: "openai/gpt-oss-120b", name: "plan_facts", schema, output: Output, system: "system", user: "plan", actorId: "actor", maxCompletionTokens: 80 }))
+      .resolves.toEqual({ outcome: "Ship integration", dependencies: ["gateway"] });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
   it("uses JSON-object mode first for a compact comparison stage", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ semanticRelation: "complements", explanation: "The branches expose separate release risks." }) } }] }), { status: 200 }));
     await expect(new GroqClient(config).strictJson({ name: "scenario_comparison", schema: comparisonSchema, output: ComparisonOutput, system: "system", user: "scenarios", actorId: "actor", responseMode: "object" }))
