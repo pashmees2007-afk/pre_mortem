@@ -151,3 +151,29 @@ describe("branch angles and risk count", () => {
     expect(trace("Decision Skill")).toMatchObject({ metadata: { fallback: false } });
   });
 });
+
+describe("stated mitigations", () => {
+  it("passes the plan's stated mitigations to the synthesis, separately from missing controls", async () => {
+    const stated = ["confidence threshold and reversible write-back for false matches"];
+    const { engine, groq } = harness({ plan_facts: () => ({ ...facts, statedMitigations: stated }) });
+    await engine.run(runId);
+    const synthesis = groq.strictJson.mock.calls.map(([call]) => call as { name: string; user: string }).find((call) => call.name === "risk_synthesis")!.user;
+    expect(synthesis).toContain("STATED_MITIGATIONS");
+    expect(synthesis).toContain(stated[0]);
+  });
+
+  it("still accepts facts saved before statedMitigations existed", async () => {
+    const { PlanFactsSchema } = await import("./contracts.js");
+    expect(PlanFactsSchema.safeParse(facts).success).toBe(true);
+    expect(PlanFactsSchema.safeParse({ ...facts, statedMitigations: ["dry-run mode by default"] }).success).toBe(true);
+  });
+});
+
+describe("fallback scenario wording", () => {
+  it("reads a missing control written as 'No ...' as a plain sentence", () => {
+    const evidence = [{ id: "5d1f6f1e-0000-4000-8000-000000000001", branch: "A", status: "retrieved", sourceTier: 1 }] as EvidenceSource[];
+    const result = fallbackScenario({ branch: "A", facts: { ...facts, missingControls: ["No buffer for audit delays", "a rehearsed rollback procedure"] }, plan, evidence })!;
+    expect(result.claims.map((claim) => claim.statement)).toEqual(["The plan has no buffer for audit delays.", "The plan does not yet show a rehearsed rollback procedure."]);
+    expect(result.rootCause).toBe("The plan has no buffer for audit delays.");
+  });
+});

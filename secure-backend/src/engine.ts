@@ -157,14 +157,16 @@ export function fallbackScenario(args: { branch: "A" | "B"; facts: PlanFacts; pl
   if (!cited.length) return null;
   const category = args.plan.angles.find((angle) => angle.branch === args.branch)?.category ?? "operational_readiness";
   const gaps = args.facts.missingControls.length ? args.facts.missingControls.slice(0, 3) : [`a verified control for: ${args.facts.outcome}`];
+  // missingControls are often written as "No buffer for audit delays"; read those as "The plan has no ...".
+  const gapSentence = (gap: string) => /^no\s/i.test(gap) ? `The plan has no ${gap.replace(/^no\s+/i, "")}.` : `The plan does not yet show ${gap}.`;
   return ScenarioSchema.parse({
     primaryCategory: category,
     contributingCategories: [],
-    rootCause: `The plan does not yet show ${gaps[0]}.`.slice(0, 180),
+    rootCause: gapSentence(gaps[0]!).slice(0, 180),
     narrative: `Rule-based scenario for branch ${args.branch}: the model's scenario could not be validated, so this one is built from the plan's own facts. The plan (${args.facts.outcome}, ${args.facts.timeline}) lists these missing controls: ${gaps.join("; ")}. Each claim cites a source this branch retrieved; impact and likelihood are conservative defaults, not model estimates.`.slice(0, 1_200),
     claims: gaps.map((gap, index) => ({
       category,
-      statement: `The plan does not yet show ${gap}.`.slice(0, 320),
+      statement: gapSentence(gap).slice(0, 320),
       evidenceIds: [cited[index % cited.length]!.id],
       impact: 4,
       likelihood: 3,
@@ -431,6 +433,7 @@ export class PreMortemEngine {
             dataBlock("SCENARIO_A", comparisonCard(scenarioA, labels)),
             dataBlock("SCENARIO_B", comparisonCard(scenarioB, labels)),
             dataBlock("COMPARISON", comparison),
+            dataBlock("STATED_MITIGATIONS", facts.statedMitigations ?? []),
             dataBlock("ALLOWED_EVIDENCE", synthesisEvidenceCards(allowedEvidence, [scenarioA, scenarioB], labels)),
           ].join("\n"),
           actorId: run.requestedBy,
