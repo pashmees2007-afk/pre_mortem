@@ -193,6 +193,29 @@ describe("GroqClient web search", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
+  it("waits out several per-minute limits in a row before giving the stage its answer", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: { message: "Rate limit reached on output tokens per minute (OTPM). Please try again in 16.5s." } }), { status: 429 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: { message: "Rate limit reached on output tokens per minute (OTPM). Please try again in 33.42s." } }), { status: 429 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: { message: "Rate limit reached on output tokens per minute (OTPM). Please try again in 12.7s." } }), { status: 429 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(validResponse), { status: 200 }));
+    await expect(new GroqClient(config).strictJson({ name: "plan_facts", schema, output: Output, system: "system", user: "plan", actorId: "actor" }))
+      .resolves.toEqual({ outcome: "Ship integration", dependencies: ["gateway"] });
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+  });
+
+  it("stops retrying after three per-minute waits", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response(JSON.stringify({ error: { message: "Rate limit reached on output tokens per minute (OTPM). Please try again in 1s." } }), { status: 429 }));
+    await expect(new GroqClient(config).strictJson({ name: "plan_facts", schema, output: Output, system: "system", user: "plan", actorId: "actor" })).rejects.toThrow("OTPM");
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+  });
+
+  it("stops retrying once the total wait would pass 90 seconds", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response(JSON.stringify({ error: { message: "Rate limit reached on output tokens per minute (OTPM). Please try again in 50s." } }), { status: 429 }));
+    await expect(new GroqClient(config).strictJson({ name: "plan_facts", schema, output: Output, system: "system", user: "plan", actorId: "actor" })).rejects.toThrow("OTPM");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
   it("fails fast instead of waiting out a daily-quota hint measured in minutes", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch")
       .mockResolvedValueOnce(new Response(JSON.stringify({ error: { message: "Rate limit reached on tokens per day (TPD). Please try again in 4m45.984s." } }), { status: 429 }));

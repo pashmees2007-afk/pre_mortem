@@ -157,17 +157,18 @@ function fallbackSynthesis(a: Scenario, b: Scenario, comparison: Comparison): Sy
   };
 }
 
-function fallbackControlAssessment(answer: string): { evidence: "verified" | "partial" | "unverified" | "absent"; rationale: string; gaps: string[] } {
+function fallbackControlAssessment(answer: string, rateLimited: boolean): { evidence: "verified" | "partial" | "unverified" | "absent"; rationale: string; gaps: string[] } {
   const lower = answer.toLowerCase();
+  // The criteria match CONTROL_CRITERIA in assessMitigation, so the fallback asks for the same proof for any plan.
   const gaps = [
     ["named accountable owner", /owner|accountable|lead/],
-    ["repeatable payment and webhook test evidence", /test|staged|staging|evidence/],
+    ["repeatable test evidence", /test|staged|staging|rehears|evidence/],
     ["rollback or reconciliation evidence", /rollback|reconcil/],
     ["monitoring signal or alert evidence", /monitor|alert/],
   ].filter(([, pattern]) => !(pattern as RegExp).test(lower)).map(([gap]) => `Provide ${gap}.`);
   return {
     evidence: "unverified",
-    rationale: "Provider control-assessment output was invalid. The human answer describes planned controls, but no independently verifiable test artifact or monitoring result was supplied.",
+    rationale: `${rateLimited ? "The assessment provider was rate-limited, so this answer was checked against the control criteria without it." : "Provider control-assessment output was invalid."} The answer is treated as describing planned controls until a verifiable test artifact or monitoring result is supplied.`,
     gaps: gaps.length ? gaps : ["Attach a completed test record or monitoring result before the risk can be treated as verified."],
   };
 }
@@ -427,6 +428,7 @@ export class PreMortemEngine {
     const risk = await this.repo.getRiskForActor(args.riskId, args.actor);
     let assessment: { evidence: "verified" | "partial" | "unverified" | "absent"; rationale: string; gaps: string[] };
     let usedControlFallback = false;
+    let rateLimited = false;
     try {
       assessment = await this.groq.strictJson({
         name: "control_assessment",
@@ -444,7 +446,8 @@ export class PreMortemEngine {
       });
     } catch (error) {
       if (!(error instanceof UpstreamError)) throw error;
-      assessment = fallbackControlAssessment(args.answer);
+      rateLimited = error.status === 429;
+      assessment = fallbackControlAssessment(args.answer, rateLimited);
       usedControlFallback = true;
     }
     const scoring = rescoreSeverity(risk.severity, assessment.evidence);
@@ -457,8 +460,8 @@ export class PreMortemEngine {
       skill: "Human Challenge",
       stage: "assess_mitigation",
       status: assessment.evidence === "verified" && !usedControlFallback ? "completed" : "attention",
-      detail: usedControlFallback ? `Provider control assessment was invalid; a conservative human-evidence check was used. ${assessment.rationale}` : assessment.rationale,
-      metadata: { evidence: assessment.evidence, before: scoring.before, after: scoring.after, gaps: assessment.gaps, fallback: usedControlFallback },
+      detail: usedControlFallback ? `A conservative rule-based check was used. ${assessment.rationale}` : assessment.rationale,
+      metadata: { evidence: assessment.evidence, before: scoring.before, after: scoring.after, gaps: assessment.gaps, fallback: usedControlFallback, ...(usedControlFallback ? { fallbackCause: rateLimited ? "rate_limited" : "invalid_output" } : {}) },
     });
     return { assessment, ...scoring };
   }

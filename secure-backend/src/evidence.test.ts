@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { PlanFacts } from "./contracts.js";
-import { evidenceTopicFor, retrieveEvidence, siteKey, tierOneDomainsFor } from "./evidence.js";
+import { documentKey, evidenceTopicFor, isTranslatedPage, retrieveEvidence, siteKey, tierOneDomainsFor } from "./evidence.js";
 import type { GroqClient } from "./groq.js";
 
 const facts: PlanFacts = {
@@ -195,5 +195,42 @@ describe("GPT-OSS browser_search evidence", () => {
     expect(sources.map((source) => source.hostname)).toEqual(["kubernetes.io", "www.groundcover.com"]);
     expect(sources.map((source) => source.sourceTier)).toEqual([1, 3]);
     expect(webSearch.mock.calls[1]?.[0].includeDomains).toBeUndefined();
+  });
+});
+
+describe("one source per document", () => {
+  const orr = "https://docs.aws.amazon.com/wellarchitected/latest/operational-readiness-reviews/wa-operational-readiness-reviews.html";
+  const page = (url: string, title = "Operational Readiness Reviews (ORR)") => ({ url, title, content: "Operational readiness reviews check that a workload is ready for production." });
+
+  it("keys mirrors of one page together: query string, www., versioned hosts and language segments", () => {
+    expect(documentKey(`${orr}?did=wp_card`)).toBe(documentKey(orr));
+    expect(documentKey("https://docs.aws.amazon.com/it_it/wellarchitected/latest/operational-readiness-reviews/wa-operational-readiness-reviews.html")).toBe(documentKey(orr));
+    const blog = "https://kubernetes.io/blog/2016/07/stateful-applications-in-containers-kubernetes/";
+    expect(documentKey("https://www.kubernetes.io/blog/2016/07/stateful-applications-in-containers-kubernetes")).toBe(documentKey(blog));
+    expect(documentKey("https://v1-32.docs.kubernetes.io/blog/2016/07/stateful-applications-in-containers-kubernetes")).toBe(documentKey(blog));
+    expect(documentKey("https://kubernetes.io/docs/tutorials/stateful-application/")).not.toBe(documentKey(blog));
+  });
+
+  it("treats only a leading language segment other than English as a translation", () => {
+    expect(isTranslatedPage("https://kubernetes.io/id/docs/tutorials/stateful-application")).toBe(true);
+    expect(isTranslatedPage("https://docs.aws.amazon.com/de_de/wellarchitected/latest/")).toBe(true);
+    expect(isTranslatedPage("https://learn.microsoft.com/en-us/azure/aks/")).toBe(false);
+    expect(isTranslatedPage("https://sre.google/sre-book/service-best-practices/")).toBe(false);
+    expect(isTranslatedPage("https://github.blog/engineering/")).toBe(false);
+  });
+
+  it("retains one English copy when a search returns the same page in several languages and URLs", async () => {
+    const webSearch = vi.fn().mockResolvedValue(toolResponse([
+      page(`${orr}?did=wp_card`),
+      page(orr),
+      page(orr.replace(".com/", ".com/es_es/")),
+      page(orr.replace(".com/", ".com/id_id/")),
+      page("https://aws.amazon.com/blogs/migration-and-modernization/disposition-strategy-and-planning-for-migrating-kubernetes-clusters", "Disposition strategy for migrating Kubernetes clusters"),
+    ]));
+    const sources = await retrieveEvidence({ client: { webSearch } as unknown as GroqClient, facts, branch: "B", actorId: "actor" });
+    expect(sources.map((source) => source.url)).toEqual([
+      `${orr}?did=wp_card`,
+      "https://aws.amazon.com/blogs/migration-and-modernization/disposition-strategy-and-planning-for-migrating-kubernetes-clusters",
+    ]);
   });
 });
