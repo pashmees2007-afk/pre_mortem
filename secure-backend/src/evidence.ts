@@ -14,8 +14,11 @@ const TIER_ONE_BY_TOPIC: Record<EvidenceTopic, Record<Branch, string[]>> = {
     B: ["sre.google", "github.blog", "blog.cloudflare.com", "aws.amazon.com", "docs.aws.amazon.com"],
   },
   fintech: {
-    A: ["fsb.org", "bankofengland.co.uk", "fca.org.uk", "ico.org.uk", "docs.stripe.com"],
-    B: ["ofac.treasury.gov", "bsaaml.ffiec.gov", "fincen.gov", "aws.amazon.com", "sre.google"],
+    // Indian regulators and payment-rail bodies sit beside the UK and US ones, so plans built on UPI,
+    // Account Aggregator or the DPDP Act can cite their own rules: RBI and Sahamati (the AA industry
+    // body) on branch A, NPCI and MeitY on branch B.
+    A: ["fsb.org", "bankofengland.co.uk", "fca.org.uk", "ico.org.uk", "docs.stripe.com", "rbi.org.in", "sahamati.org.in"],
+    B: ["ofac.treasury.gov", "bsaaml.ffiec.gov", "fincen.gov", "aws.amazon.com", "sre.google", "npci.org.in", "meity.gov.in"],
   },
 };
 const TIER_ONE_DOMAINS = new Set(Object.values(TIER_ONE_BY_TOPIC).flatMap((byBranch) => [...byBranch.A, ...byBranch.B]));
@@ -61,8 +64,15 @@ export function tierOneDomainsFor(topic: EvidenceTopic, branch: Branch) {
   return TIER_ONE_BY_TOPIC[topic][branch];
 }
 
-function classifyTier(hostname: string): 1 | 2 | 3 {
-  const canonicalHostname = hostname.toLowerCase().replace(/^www\./, "");
+/** Product listings on a trusted publisher's site are vendor marketing, not guidance from that publisher. */
+export function isVendorListing(url: URL) {
+  return url.hostname.toLowerCase().replace(/^www\./, "") === "aws.amazon.com" && /^\/marketplace(\/|$)/i.test(url.pathname);
+}
+
+function classifyTier(url: URL): 1 | 2 | 3 {
+  if (isVendorListing(url)) return 3;
+  const hostname = url.hostname.toLowerCase();
+  const canonicalHostname = hostname.replace(/^www\./, "");
   if (TIER_ONE_DOMAINS.has(canonicalHostname)) return 1;
   if (TIER_TWO_SUFFIXES.some((suffix) => hostname.endsWith(suffix))) return 2;
   return 3;
@@ -142,12 +152,14 @@ function extractEvidence(args: { response: WebSearchResponse; branch: Branch; se
     if (isTranslatedPage(href)) continue;
     // A trusted search is a promise about domains, so it is enforced here rather than left to the provider.
     if (onlyDomains?.length && !onDomain(url.hostname, onlyDomains)) continue;
+    // A trusted search asks for official guidance, so vendor product listings on a trusted site are skipped there.
+    if (onlyDomains?.length && isVendorListing(url)) continue;
     seen.add(key);
     sources.push({
       id: randomUUID(), branch, url: href, hostname: url.hostname.toLowerCase(),
       title: title.slice(0, 300), publisher: url.hostname.replace(/^www\./, "") || null,
       snippet: snippet.slice(0, 1_500), providerRank: item.score,
-      sourceTier: classifyTier(url.hostname.toLowerCase()), status: "retrieved", retrievedAt: now,
+      sourceTier: classifyTier(url), status: "retrieved", retrievedAt: now,
     });
     if (sources.length === 8) break;
   }

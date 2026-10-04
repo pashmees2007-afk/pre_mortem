@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { PlanFacts } from "./contracts.js";
-import { documentKey, evidenceTopicFor, isTranslatedPage, retrieveEvidence, siteKey, tierOneDomainsFor } from "./evidence.js";
+import { documentKey, evidenceTopicFor, isTranslatedPage, isVendorListing, retrieveEvidence, siteKey, tierOneDomainsFor } from "./evidence.js";
 import type { GroqClient } from "./groq.js";
 
 const facts: PlanFacts = {
@@ -232,5 +232,33 @@ describe("one source per document", () => {
       `${orr}?did=wp_card`,
       "https://aws.amazon.com/blogs/migration-and-modernization/disposition-strategy-and-planning-for-migrating-kubernetes-clusters",
     ]);
+  });
+});
+
+describe("Indian fintech sources and vendor listings", () => {
+  it("includes Indian regulators and payment-rail bodies in the fintech Tier-1 set, one publisher per branch", () => {
+    expect(tierOneDomainsFor("fintech", "A")).toEqual(expect.arrayContaining(["rbi.org.in", "sahamati.org.in"]));
+    expect(tierOneDomainsFor("fintech", "B")).toEqual(expect.arrayContaining(["npci.org.in", "meity.gov.in"]));
+    expect(siteKey("www.rbi.org.in")).toBe("rbi.org.in");
+    expect(siteKey("npci.org.in")).toBe("npci.org.in");
+  });
+
+  it("recognises AWS Marketplace product listings, and nothing else on aws.amazon.com", () => {
+    expect(isVendorListing(new URL("https://aws.amazon.com/marketplace/pp/prodview-abc123"))).toBe(true);
+    expect(isVendorListing(new URL("https://aws.amazon.com/blogs/industries/fraud-detection"))).toBe(false);
+    expect(isVendorListing(new URL("https://docs.aws.amazon.com/marketplace/latest/userguide/"))).toBe(false);
+  });
+
+  it("skips vendor listings in a trusted search and grades them Tier 3 from a broad search", async () => {
+    const listing = { url: "https://aws.amazon.com/marketplace/pp/prodview-reconcile", title: "Payment Reconciliation Agent", content: "A marketplace listing for an automated payment reconciliation product." };
+    const guidance = { url: "https://aws.amazon.com/blogs/industries/matching-accuracy", title: "Measuring matching accuracy", content: "How to measure precision and recall for rule or ML-based record matching." };
+    const official = { url: "https://www.fincen.gov/resources/statutes-regulations/guidance", title: "FinCEN Guidance", content: "Guidance on customer due diligence and suspicious activity reporting obligations." };
+    const webSearch = vi.fn()
+      .mockResolvedValueOnce(toolResponse([listing, guidance]))
+      .mockResolvedValueOnce(toolResponse([listing, official]));
+    const sources = await retrieveEvidence({ client: { webSearch } as unknown as GroqClient, facts: fintechFacts, branch: "B", actorId: "actor" });
+    expect(sources.map((source) => source.url)).toEqual([guidance.url, listing.url, official.url]);
+    expect(sources.find((source) => source.url === listing.url)?.sourceTier).toBe(3);
+    expect(sources.find((source) => source.url === guidance.url)?.sourceTier).toBe(1);
   });
 });
