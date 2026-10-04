@@ -46,4 +46,13 @@ describe("browser request contracts", () => {
     expect(() => PasswordResetConfirmInput.parse({ token: "short", password: "BrandNewPassword123" })).toThrow();
     expect(() => PasswordResetConfirmInput.parse({ token: "a".repeat(32), password: "alllowercase" })).toThrow();
   });
+
+  it("rejects impossible calendar dates as a validation error instead of letting Postgres fail with a 500", () => {
+    const action = { owner: "Maria Chen", approvalNote: "Approve the reversible gateway canary." };
+    expect(MockActionInput.parse({ ...action, dueDate: "2026-10-11" }).dueDate).toBe("2026-10-11");
+    expect(MockActionInput.parse({ ...action, dueDate: "2028-02-29" }).dueDate).toBe("2028-02-29");
+    expect(MockActionInput.safeParse({ ...action, dueDate: "2026-02-31" }).success).toBe(false);
+    expect(MockActionInput.safeParse({ ...action, dueDate: "2027-02-29" }).success).toBe(false);
+    expect(MockActionInput.safeParse({ ...action, dueDate: "2026-99-99" }).success).toBe(false);
+  });
 });

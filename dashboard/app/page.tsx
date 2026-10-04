@@ -43,6 +43,12 @@ function sourceFor(risk: Risk, sources: Source[]) {
 
 function delay(ms: number) { return new Promise((resolve) => setTimeout(resolve, ms)); }
 
+function defaultDueDate() {
+  const due = new Date();
+  due.setDate(due.getDate() + 7);
+  return `${due.getFullYear()}-${String(due.getMonth() + 1).padStart(2, "0")}-${String(due.getDate()).padStart(2, "0")}`;
+}
+
 function traceTone(status: AgentTraceEvent["status"]) {
   if (status === "attention" || status === "failed" || status === "replan") return "signal";
   if (status === "approved") return "gold";
@@ -66,9 +72,9 @@ export default function DashboardPage() {
   const [running, setRunning] = useState(false);
   const [submittingMitigation, setSubmittingMitigation] = useState(false);
   const [actionOwner, setActionOwner] = useState("Project owner");
-  const [actionDueDate, setActionDueDate] = useState("2026-09-02");
+  const [actionDueDate, setActionDueDate] = useState(defaultDueDate);
   const [approvalNote, setApprovalNote] = useState("I approve this safe, reversible mock mitigation action.");
-  const [verificationNote, setVerificationNote] = useState("");
+  const [verificationNotes, setVerificationNotes] = useState<Record<string, string>>({});
   const [savingAction, setSavingAction] = useState(false);
   const [verifyingAction, setVerifyingAction] = useState(false);
   const [feedback, setFeedback] = useState<string | null>(null);
@@ -88,6 +94,7 @@ export default function DashboardPage() {
   const selectedRisk = analysis.risks.find((risk) => risk.id === selectedRiskId) ?? analysis.risks[0];
   const matrix = matrixStatus(analysis);
   const sourceMap = useMemo(() => new Map(analysis.sources.map((source) => [source.id, source])), [analysis.sources]);
+  const selectedRiskHasOpenAction = analysis.actions.some((action) => action.riskId === selectedRisk?.id && action.status === "approved");
 
   const refreshHistory = useCallback(async (id: string) => {
     if (!id) return;
@@ -240,7 +247,7 @@ export default function DashboardPage() {
   }
 
   async function approveAction() {
-    if (!selectedRisk || actionOwner.trim().length < 2 || approvalNote.trim().length < 8) return;
+    if (!selectedRisk || selectedRiskHasOpenAction || actionOwner.trim().length < 2 || approvalNote.trim().length < 8) return;
     setSavingAction(true);
     setError(null);
     try {
@@ -253,7 +260,6 @@ export default function DashboardPage() {
         setAnalysis(await getAnalysis(analysis.id));
         setFeedback("Action approved and recorded. The project system is still unchanged because this MVP uses a mock action board.");
       }
-      setVerificationNote("");
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "The action could not be approved.");
     } finally {
@@ -262,19 +268,20 @@ export default function DashboardPage() {
   }
 
   async function verifyAction(action: MockAction, outcome: "verified" | "failed") {
-    if (verificationNote.trim().length < 8) return;
+    const note = (verificationNotes[action.id] ?? "").trim();
+    if (note.length < 8) return;
     setVerifyingAction(true);
     setError(null);
     try {
       if (isDemo) {
-        setAnalysis((current) => ({ ...current, actions: current.actions.map((item) => item.id === action.id ? { ...item, status: outcome === "verified" ? "verified" : "replan_required", verificationNote: verificationNote.trim(), verifiedAt: new Date().toISOString() } : item), trace: [...current.trace, { skill: "Verification Skill", stage: "verify_action", status: outcome === "verified" ? "verified" : "failed", detail: verificationNote.trim(), metadata: { actionId: action.id }, createdAt: new Date().toISOString() }, ...(outcome === "failed" ? [{ skill: "PreMortem Main Agent", stage: "replan", status: "replan" as const, detail: "Verification failed, so the Main Agent requested a new mitigation plan.", metadata: { actionId: action.id }, createdAt: new Date().toISOString() }] : [])] }));
+        setAnalysis((current) => ({ ...current, actions: current.actions.map((item) => item.id === action.id ? { ...item, status: outcome === "verified" ? "verified" : "replan_required", verificationNote: note, verifiedAt: new Date().toISOString() } : item), trace: [...current.trace, { skill: "Verification Skill", stage: "verify_action", status: outcome === "verified" ? "verified" : "failed", detail: note, metadata: { actionId: action.id }, createdAt: new Date().toISOString() }, ...(outcome === "failed" ? [{ skill: "PreMortem Main Agent", stage: "replan", status: "replan" as const, detail: "Verification failed, so the Main Agent requested a new mitigation plan.", metadata: { actionId: action.id }, createdAt: new Date().toISOString() }] : [])] }));
         setFeedback(outcome === "verified" ? "Mock action verified. The case can move forward." : "Verification failed. The Main Agent has requested a replan.");
       } else {
-        await verifyMockAction(action.id, { outcome, note: verificationNote.trim() });
+        await verifyMockAction(action.id, { outcome, note });
         setAnalysis(await getAnalysis(analysis.id));
         setFeedback(outcome === "verified" ? "Action verified." : "Verification failed and a replan was recorded.");
       }
-      setVerificationNote("");
+      setVerificationNotes((current) => { const { [action.id]: _done, ...rest } = current; return rest; });
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "The verification result could not be saved.");
     } finally {
@@ -360,8 +367,8 @@ export default function DashboardPage() {
           <section id="actions" className="section" aria-labelledby="actions-title">
             <div className="section-head"><div><span className="eyebrow">Human-in-the-loop control</span><h2 id="actions-title" className="section-title">Approval, action, and verification</h2></div><p className="section-caption">The agent cannot close a risk by itself. A person approves a safe mock action, then verifies the result or sends the case back for replanning.</p></div>
             <div className="action-layout">
-              <article className="card approval-card"><div className="approval-head"><span className="seal"><UserRoundCheck size={15} /></span><div><span className="eyebrow">Human approval gate</span><h3>{selectedRisk?.title ?? "Select a risk"}</h3></div></div><p>Approve only a reversible mock action. This MVP records the decision inside Pre-Mortem and does not change Jira, GitHub, or any external project tool.</p><div className="control-grid"><label className="label">Action owner<input className="textarea control-input" value={actionOwner} onChange={(event) => setActionOwner(event.target.value)} /></label><label className="label">Due date<input type="date" className="textarea control-input" value={actionDueDate} onChange={(event) => setActionDueDate(event.target.value)} /></label></div><label className="label">Approval note<textarea className="textarea control-note" value={approvalNote} onChange={(event) => setApprovalNote(event.target.value)} /></label><button className="button primary" onClick={approveAction} disabled={savingAction || !selectedRisk || approvalNote.trim().length < 8}>{savingAction ? <><LoaderCircle size={14} className="spin" /> Saving approval</> : <><BadgeCheck size={14} /> Approve mock action</>}</button></article>
-              <article className="card action-board"><div className="action-board-head"><div><span className="eyebrow">Action board</span><h3>Approved mitigation cards</h3></div><span className="pill">{analysis.actions.length} recorded</span></div>{analysis.actions.length === 0 ? <div className="empty action-empty"><CircleDashed size={21} />No approved action yet. Assess a mitigation, then approve a safe mock task.</div> : <div className="action-list">{analysis.actions.map((action) => <ActionCard key={action.id} action={action} verificationNote={verificationNote} onNote={setVerificationNote} onVerify={verifyAction} loading={verifyingAction} />)}</div>}</article>
+              <article className="card approval-card"><div className="approval-head"><span className="seal"><UserRoundCheck size={15} /></span><div><span className="eyebrow">Human approval gate</span><h3>{selectedRisk?.title ?? "Select a risk"}</h3></div></div><p>Approve only a reversible mock action. This MVP records the decision inside Pre-Mortem and does not change Jira, GitHub, or any external project tool.</p><div className="control-grid"><label className="label">Action owner<input className="textarea control-input" value={actionOwner} onChange={(event) => setActionOwner(event.target.value)} /></label><label className="label">Due date<input type="date" className="textarea control-input" value={actionDueDate} onChange={(event) => setActionDueDate(event.target.value)} /></label></div><label className="label">Approval note<textarea className="textarea control-note" value={approvalNote} onChange={(event) => setApprovalNote(event.target.value)} /></label><button className="button primary" onClick={approveAction} disabled={savingAction || !selectedRisk || selectedRiskHasOpenAction || approvalNote.trim().length < 8}>{savingAction ? <><LoaderCircle size={14} className="spin" /> Saving approval</> : <><BadgeCheck size={14} /> Approve mock action</>}</button>{selectedRiskHasOpenAction && <p className="hint" style={{ marginTop: 8 }}>This risk already has an approved action awaiting verification. Verify it or request a replan before approving another.</p>}</article>
+              <article className="card action-board"><div className="action-board-head"><div><span className="eyebrow">Action board</span><h3>Approved mitigation cards</h3></div><span className="pill">{analysis.actions.length} recorded</span></div>{analysis.actions.length === 0 ? <div className="empty action-empty"><CircleDashed size={21} />No approved action yet. Assess a mitigation, then approve a safe mock task.</div> : <div className="action-list">{analysis.actions.map((action) => <ActionCard key={action.id} action={action} verificationNote={verificationNotes[action.id] ?? ""} onNote={(value) => setVerificationNotes((current) => ({ ...current, [action.id]: value }))} onVerify={verifyAction} loading={verifyingAction} />)}</div>}</article>
             </div>
           </section>
 

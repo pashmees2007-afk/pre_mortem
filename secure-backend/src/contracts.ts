@@ -78,7 +78,11 @@ export const CriticSchema = z.object({
 
 export const MockActionInput = z.object({
   owner: z.string().trim().min(2).max(120),
-  dueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Due date must use YYYY-MM-DD"),
+  dueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Due date must use YYYY-MM-DD")
+    .refine((value) => {
+      const date = new Date(`${value}T00:00:00Z`);
+      return !Number.isNaN(date.getTime()) && date.toISOString().startsWith(value);
+    }, "Due date must be a real calendar date"),
   approvalNote: z.string().trim().min(8).max(800),
 }).strict();
 

@@ -374,6 +374,10 @@ export class Repository {
     );
     const risk = result.rows[0];
     if (!risk) throw new AppError(404, "RISK_NOT_FOUND", "Risk not found");
+    // Re-approval after a verified or replan_required outcome is the intended loop; a second
+    // approval while one is still awaiting verification only duplicates the audit trail.
+    const open = await this.pool.query(`SELECT 1 FROM mock_actions WHERE risk_item_id = $1 AND status = 'approved' LIMIT 1`, [risk.riskId]);
+    if (open.rows.length) throw new AppError(409, "ACTION_ALREADY_OPEN", "An approved action for this risk is still awaiting verification");
     const id = randomUUID();
     await this.pool.query(
       `INSERT INTO mock_actions (id, risk_item_id, analysis_run_id, organization_id, approved_by, owner, due_date, approval_note, status)
@@ -393,7 +397,13 @@ export class Repository {
     const stored = action.rows[0];
     if (!stored) throw new AppError(404, "ACTION_NOT_FOUND", "Action not found");
     const status = args.outcome === "verified" ? "verified" : "replan_required";
-    await this.pool.query(`UPDATE mock_actions SET status = $2, verification_note = $3, verified_at = NOW() WHERE id = $1`, [stored.id, status, args.note]);
+    // Conditional on still being open so a closed outcome can never be overwritten, even by
+    // two concurrent requests: the verification record is the audit trail.
+    const updated = await this.pool.query(
+      `UPDATE mock_actions SET status = $2, verification_note = $3, verified_at = NOW() WHERE id = $1 AND status = 'approved' RETURNING id`,
+      [stored.id, status, args.note],
+    );
+    if (!updated.rows.length) throw new AppError(409, "ACTION_ALREADY_CLOSED", "This action has already been verified or sent for replanning");
     await this.recordTrace({ runId: stored.runId, skill: "Verification Skill", stage: "verify_action", status: args.outcome === "verified" ? "verified" : "failed", detail: args.note, metadata: { actionId: stored.id } });
     if (args.outcome === "failed") {
       await this.recordTrace({ runId: stored.runId, skill: "PreMortem Main Agent", stage: "replan", status: "replan", detail: "Verification failed, so the Main Agent requested a new mitigation plan.", metadata: { actionId: stored.id } });
