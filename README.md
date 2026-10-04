@@ -1,17 +1,17 @@
 # Pre-Mortem
 
+[![CI](https://github.com/pashmees2007-afk/pre_mortem/actions/workflows/ci.yml/badge.svg)](https://github.com/pashmees2007-afk/pre_mortem/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
+
+**Most "AI risk analysis" tools give you one confident paragraph and no way to check it. Pre-Mortem gives you a risk register you can actually audit.**
+
+Paste a sprint plan or PRD in and two independent AI research branches investigate it in parallel, each grounded in retrieved web evidence instead of the model's own guesses. A critic stage compares the branches, calls out where they disagree, and flags any risk that isn't backed by a real source. Nothing gets escalated to a mitigation action without a human approving it first. The result is a risk register where every claim traces back to an inspectable source, every disagreement is visible instead of averaged away, and every action requires a person to sign off — built for teams who need to trust *why* a risk was flagged, not just that it was.
+
+## How it works
+
 Pre-Mortem is an evidence-led decision-support workspace for turning a sprint plan or PRD into an inspectable pre-mortem. It does not present a single opaque answer: it retains separated evidence, compares independent failure narratives, visibly flags meaningful disagreement, and records reversible mitigation re-scoring.
 
 The Agentic MVP adds an inspectable closed loop: **understand the plan → choose research angles → retrieve and check evidence → form independent failure hypotheses → critique evidence gaps → rank risks → ask for human approval → record a safe mock action → verify or replan**.
-
-## Repository layout
-
-| Directory | Purpose |
-|---|---|
-| [`secure-backend`](./secure-backend) | Node.js/TypeScript API and worker. It owns prompts, source policy, rate limits, planner-selected research angles, evidence persistence, independent branches, evidence critique, approval records, mock actions, verification, replanning, and severity rules. |
-| [`dashboard`](./dashboard) | Next.js decision workspace. It provides plan submission, polling, an agent activity trace, planner and critic view, disagreement matrix, evidence ledger, risk register, mitigation interface, approval gate, mock action board, and verification controls. |
-
-## Agentic MVP behavior
 
 | Step | System behavior | What the user can inspect |
 |---|---|---|
@@ -20,6 +20,13 @@ The Agentic MVP adds an inspectable closed loop: **understand the plan → choos
 | Independent branches and Critic | Creates two evidence-limited failure hypotheses, compares them, and calls out the most important evidence gap. | Scenarios, disagreement matrix, critic finding, and next check. |
 | Human Approval Gate | Requires a person to approve a mitigation before an action is recorded. | Approval note, owner, and due date. |
 | Mock Action and Verification | Records a reversible mock task; a human marks it verified or failed. A failed verification creates a replan trace. | Action board, verification note, and replan event. |
+
+## Repository layout
+
+| Directory | Purpose |
+|---|---|
+| [`secure-backend`](./secure-backend) | Node.js/TypeScript API and worker. It owns prompts, source policy, rate limits, planner-selected research angles, evidence persistence, independent branches, evidence critique, approval records, mock actions, verification, replanning, and severity rules. |
+| [`dashboard`](./dashboard) | Next.js decision workspace. It provides plan submission, polling, an agent activity trace, planner and critic view, disagreement matrix, evidence ledger, risk register, mitigation interface, approval gate, mock action board, and verification controls. |
 
 ## Security boundary
 
@@ -45,4 +52,8 @@ cd ../dashboard
 pnpm install && pnpm check && pnpm test && pnpm build
 ```
 
-> The dashboard’s example dossier is illustrative and clearly labeled. A live analysis requires a configured secure backend, a project UUID, and a trusted HTTP-only JWT cookie bridge.
+> The dashboard's example dossier is illustrative and clearly labeled. A live analysis requires a configured secure backend, a project UUID, and a trusted HTTP-only JWT cookie bridge.
+
+## License
+
+[MIT](./LICENSE)
