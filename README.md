@@ -38,6 +38,15 @@ The mock action board deliberately **does not** write to Jira, GitHub, or anothe
 
 The Next.js dashboard forwards requests through a narrow same-origin route using an HTTP-only access-token cookie. See the package-level READMEs for the required environment variables, PostgreSQL/Redis setup, JWT claim contract, migrations, and local run commands.
 
+## The numbers, not just the pitch
+
+A project that argues for evidence over vibes should hold itself to the same standard. These are facts about the pipeline, not marketing copy:
+
+- **A full analysis makes a fixed, countable number of provider calls**: 8 structured Qwen stages (plan normalization, investigation planning, two independent scenarios, comparison, evidence critique, risk synthesis, and — on mitigation submission — control assessment) plus 2–6 Compound Mini web searches (each research branch stops after 2 retained sources, trying up to 3 queries first). That is 9–13 total provider calls for one complete pre-mortem — verifiable directly in [`engine.ts`](./secure-backend/src/engine.ts) and [`evidence.ts`](./secure-backend/src/evidence.ts), not an estimate.
+- **The pipeline is deliberately paced, not rushed for a demo**: a mandatory 62-second cooldown ([`GROQ_EVIDENCE_COOLDOWN_MS`](./secure-backend/src/engine.ts)) separates the two evidence branches to stay under Groq's free-tier tokens-per-minute budget, so a full run takes at least ~62 seconds end to end before any model latency is added.
+- **Every run now reports its own real cost**: the engine captures the exact request count and token usage Groq returns for that run (not an average, not an estimate) and records it in the agent trace as a `Usage Ledger` event ([`groq.ts`](./secure-backend/src/groq.ts), [`engine.ts`](./secure-backend/src/engine.ts)). Run `pnpm verify:groq -- --full` in `secure-backend/` with a live key to print the real `elapsedMs`, request count, and token totals for a fresh run — the receipt, not the claim.
+- **Recorded live validation runs** (see [`todo.md`](./todo.md) for the full history): a subscription-payment launch analysis retained 13 HTTPS evidence sources across two independent branches and produced 3 evidence-linked risks; a separate run retained 16 Tier-1 sources and surfaced 3 severity-5 operational-readiness risks; a comparative fintech scenario retained 14 sources and had its critic correctly flag that only one of the two branches had Tier-1 coverage.
+
 ## Local development
 
 Start the secure backend and queue worker first, then configure and run the dashboard in a second terminal. Each package includes its own `.env.example`, dependency lockfile, test suite, and detailed operating documentation.

@@ -55,6 +55,7 @@ describe("engine retry recovery", () => {
       failRun: vi.fn().mockResolvedValue(undefined),
     };
     const groq = {
+      getUsage: vi.fn().mockReturnValue({ requests: 0, promptTokens: 0, completionTokens: 0, totalTokens: 0 }),
       webSearch: vi.fn().mockRejectedValueOnce(new Error("temporary retrieval outage")).mockResolvedValue(providerSearch),
       strictJson: vi.fn(async (args: { name: string; user: string }) => {
         if (args.name === "plan_facts") return facts;

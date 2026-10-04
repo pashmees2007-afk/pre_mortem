@@ -102,4 +102,25 @@ describe("GroqClient structured reasoning", () => {
     await expect(new GroqClient(config).strictJson({ name: "plan_facts", schema, output: Output, system: "system", user: "plan", actorId: "actor" }))
       .resolves.toEqual({ outcome: "Ship integration", dependencies: ["gateway"] });
   });
+
+  it("starts with zeroed usage totals", () => {
+    expect(new GroqClient(config).getUsage()).toEqual({ requests: 0, promptTokens: 0, completionTokens: 0, totalTokens: 0 });
+  });
+
+  it("accumulates real provider-reported token usage across calls instead of inventing a cost figure", async () => {
+    vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ...validResponse, usage: { prompt_tokens: 120, completion_tokens: 40, total_tokens: 160 } }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ...validResponse, usage: { prompt_tokens: 90, completion_tokens: 30, total_tokens: 120 } }), { status: 200 }));
+    const client = new GroqClient(config);
+    await client.strictJson({ name: "plan_facts", schema, output: Output, system: "system", user: "plan", actorId: "actor" });
+    await client.strictJson({ name: "plan_facts", schema, output: Output, system: "system", user: "plan", actorId: "actor" });
+    expect(client.getUsage()).toEqual({ requests: 2, promptTokens: 210, completionTokens: 70, totalTokens: 280 });
+  });
+
+  it("still counts the request when the provider omits a usage block, without fabricating token counts", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify(validResponse), { status: 200 }));
+    const client = new GroqClient(config);
+    await client.strictJson({ name: "plan_facts", schema, output: Output, system: "system", user: "plan", actorId: "actor" });
+    expect(client.getUsage()).toEqual({ requests: 1, promptTokens: 0, completionTokens: 0, totalTokens: 0 });
+  });
 });

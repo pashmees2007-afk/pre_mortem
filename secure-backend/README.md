@@ -77,7 +77,7 @@ pnpm verify:groq            # verifies Qwen and Compound Mini only
 pnpm verify:groq -- --full  # submits a fresh full local analysis and prints a safe summary
 ```
 
-The summary includes the run ID, source counts by tier, risk titles/severity, fallback stages, and agent trace. It never prints `GROQ_API_KEY`. The runner refuses to execute with `NODE_ENV=production`; use an ignored local environment file or your shell, never Git.
+The summary includes the run ID, source counts by tier, risk titles/severity, fallback stages, agent trace, elapsed wall-clock time, and the run's real Groq request count and token usage (read from the `Usage Ledger` trace event the engine records for every run — never an estimate). It never prints `GROQ_API_KEY`. The runner refuses to execute with `NODE_ENV=production`; use an ignored local environment file or your shell, never Git.
 
 ## Authentication contract
 

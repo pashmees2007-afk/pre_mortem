@@ -5,7 +5,10 @@ import { UpstreamError } from "./errors.js";
 type GroqMessage = { role: "system" | "user"; content: string };
 type GroqResponse = {
   choices?: Array<{ message?: { content?: string; executed_tools?: unknown[] } }>;
+  usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number };
 };
+
+export type GroqUsageTotals = { requests: number; promptTokens: number; completionTokens: number; totalTokens: number };
 
 type ResponseMode = "schema" | "object";
 
@@ -42,8 +45,16 @@ function parseJsonObject(text: string): unknown {
 
 export class GroqClient {
   private structuredRequestTail: Promise<void> = Promise.resolve();
+  private usage: GroqUsageTotals = { requests: 0, promptTokens: 0, completionTokens: 0, totalTokens: 0 };
 
   constructor(private readonly config: Config) {}
+
+  /** Cumulative request/token totals for every call this instance has made. Callers that want a
+   * single run's cost snapshot this before and after the run and diff the two (see engine.ts),
+   * since one client instance is shared across every job the worker processes. */
+  getUsage(): GroqUsageTotals {
+    return { ...this.usage };
+  }
 
   private async structuredRequest(body: Record<string, unknown>): Promise<GroqResponse> {
     let release: (() => void) | undefined;
@@ -97,6 +108,11 @@ export class GroqClient {
       const message = (payload as { error?: { message?: string } } | null)?.error?.message;
       throw new UpstreamError(message || "The analysis provider rejected the request", response.status === 429 ? 429 : 502);
     }
+    const usage = (payload as GroqResponse)?.usage;
+    this.usage.requests += 1;
+    this.usage.promptTokens += usage?.prompt_tokens ?? 0;
+    this.usage.completionTokens += usage?.completion_tokens ?? 0;
+    this.usage.totalTokens += usage?.total_tokens ?? 0;
     return payload as GroqResponse;
   }
 

@@ -78,7 +78,9 @@ try {
       actor,
       policyVersion: "2026-08-01",
     });
+    const startedAt = Date.now();
     await container.engine.run(run.id);
+    const elapsedMs = Date.now() - startedAt;
     const analysis = await repo.getAnalysis(run.id, actor);
     const byTier = analysis.sources.reduce((counts, source) => {
       counts[source.sourceTier] = (counts[source.sourceTier] ?? 0) + 1;
@@ -87,10 +89,15 @@ try {
     const fallbackStages = analysis.trace
       .filter((event) => event.metadata?.fallback === true)
       .map((event) => `${event.skill}:${event.stage}`);
+    // Real numbers only: this is the exact usage the engine recorded for this run (see
+    // engine.ts's "Usage Ledger" trace event), never an estimate computed in this script.
+    const usage = analysis.trace.find((event) => event.skill === "Usage Ledger")?.metadata ?? null;
     console.log(JSON.stringify({
       ...probe,
       status: analysis.status,
       runId: analysis.id,
+      elapsedMs,
+      usage,
       evidence: { total: analysis.sources.length, byTier },
       risks: analysis.risks.map((risk) => ({ title: risk.title, severity: risk.severity, category: risk.category })),
       fallbackStages,

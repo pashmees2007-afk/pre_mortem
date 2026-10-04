@@ -181,6 +181,7 @@ export class PreMortemEngine {
   async run(runId: string) {
     const run = await this.repo.getRunForWorker(runId);
     if (!run) return; // A duplicate queue delivery or previously processed idempotency key.
+    const usageBeforeRun = this.groq.getUsage();
     try {
       await this.repo.clearTransientArtifacts(run.id);
       const facts = await this.groq.strictJson({
@@ -369,6 +370,22 @@ export class PreMortemEngine {
         status: usedSynthesisFallback ? "attention" : "completed",
         detail: `${usedSynthesisFallback ? "Provider synthesis output was invalid; a transparent evidence-preserving synthesis was used. " : ""}Created ${synthesis.risks.length} evidence-linked risks and ranked them for human review.`,
         metadata: { fallback: usedSynthesisFallback },
+      });
+
+      const usageAfterRun = this.groq.getUsage();
+      const runUsage = {
+        requests: usageAfterRun.requests - usageBeforeRun.requests,
+        promptTokens: usageAfterRun.promptTokens - usageBeforeRun.promptTokens,
+        completionTokens: usageAfterRun.completionTokens - usageBeforeRun.completionTokens,
+        totalTokens: usageAfterRun.totalTokens - usageBeforeRun.totalTokens,
+      };
+      await this.repo.recordTrace({
+        runId: run.id,
+        skill: "Usage Ledger",
+        stage: "record_provider_usage",
+        status: "completed",
+        detail: `This run made ${runUsage.requests} Groq request${runUsage.requests === 1 ? "" : "s"}${runUsage.totalTokens ? ` using ${runUsage.totalTokens} tokens` : ""}.`,
+        metadata: runUsage,
       });
     } catch (error) {
       await this.repo.failRun(run.id, error instanceof AppError ? error.code : "ANALYSIS_FAILED");
