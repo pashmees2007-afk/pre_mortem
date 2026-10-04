@@ -32,6 +32,12 @@ The local validation run completed an evidence-backed subscription-payment launc
 
 Three `pnpm verify:groq -- --full` runs of the built-in Kubernetes-migration plan on the current code (Qwen for both branches, Tavily retrieval) each succeeded with no fallback stages: 62.6–70.3 seconds, 7 Groq requests and 8,918–10,072 tokens, 2 Tavily searches, 5–11 distinct sources, and the same three risks each time (missing rollback and draining plans at severity 5, SRE availability and the Redis queue migration at 4). Those runs predate the register being sized to the plan: risk synthesis now returns three to five risks, one per distinct evidence-backed failure mode, while its fallback returns three. A run after that change took 40.2 seconds and 9,094 tokens, retained 6 Tier-1 sources, used no fallbacks, and produced four risks.
 
+On 2026-10-04, after stated mitigations landed and before the severity-5 cap, the code was run against the Kubernetes plan (66 seconds, 11,074 tokens, 11 sources, four risks) and twice against a 26-week fintech PRD (71–80 seconds, 17,021–18,093 tokens, 10–16 sources, four risks each), all with no fallback stages. On the PRD, `statedMitigations` held all eight of its own mitigations and `missingControls` held only real gaps. The approval, mock-action, verification, and replan loop was re-checked through the live API the same day: a duplicate approval and an overwrite of a closed verification both return `409`, a failed verification returns `replan_required`, and another organisation's token gets `404`.
+
+### Plan facts and severity
+
+Plan facts keep `statedMitigations` (measures the plan offers against a named risk, written `risk: mitigation`) apart from `missingControls` (gaps the plan leaves open). After extraction, a missing control that names every word of a stated risk is dropped, because the model sometimes lists a mitigated risk as missing anyway (`dropCoveredGaps` in `src/engine.ts`). After synthesis, `capTopRisks` in `src/scoring.ts` keeps at most two risks at impact × likelihood of 20 or more; any others keep their impact and have their likelihood lowered to score below 20, and the Decision Skill trace records how many were capped.
+
 ```bash
 cp .env.example .env
 pnpm install

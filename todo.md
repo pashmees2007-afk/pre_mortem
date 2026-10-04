@@ -74,7 +74,7 @@
 - [x] Run backend checks, 21 tests, and production compilation after the provider migration.
 - [x] Run dashboard checks, 4 tests, and production compilation after the provider migration.
 - [x] Confirm a live run completes both independently staged Groq evidence branches and persists their inspectable trace.
-- [ ] Complete one full live run after the Gemini free-tier request quota resets. The provider currently returns `RESOURCE_EXHAUSTED` after 20 requests for this model/project; the code now retries short quota windows, but it must not conceal a provider-enforced daily limit.
+- [ ] ~~Complete one full live run after the Gemini free-tier request quota resets.~~ **Superseded** by the move to Groq Qwen; Groq full runs have since completed (see below). The provider currently returns `RESOURCE_EXHAUSTED` after 20 requests for this model/project; the code now retries short quota windows, but it must not conceal a provider-enforced daily limit.
 
 ## Gemini Free-Tier Request Budget
 
@@ -87,8 +87,8 @@
 
 - [x] Submit one realistic project task to the capped Gemini/Groq hybrid workflow.
 - [x] Confirm that the exhausted Gemini daily quota stops the run after one provider failure, without retrying the full workflow.
-- [ ] Inspect the agent trace, retained evidence, and ranked risks after the external Gemini daily quota resets.
-- [ ] Exercise the approval, mock-action, verification, and replan path if the live run succeeds.
+- [ ] ~~Inspect the agent trace, retained evidence, and ranked risks after the external Gemini daily quota resets.~~ **Superseded** by the move to Groq Qwen; Groq runs were inspected instead.
+- [x] Exercise the approval, mock-action, verification, and replan path if the live run succeeds. First validated in the subscription-payment run (see `secure-backend/README.md`); re-run on 2026-10-04 through the live API against a LedgerLoop analysis: a mitigation answer was rated `partial` (severity 5 → 4), a second approval while an action was open returned `409 ACTION_ALREADY_OPEN`, a failed verification produced `replan_required` and a `replan` trace event, overwriting a closed verification returned `409 ACTION_ALREADY_CLOSED`, a fresh approval after the replan was verified, and another organisation's token got `404`.
 
 ## Sustainable Provider Alternative
 
@@ -116,7 +116,7 @@
 - [x] Strengthen Qwen prompts and structured-output recovery without allowing invented claims or citations.
 - [x] Make each evidence branch seek and retain Tier-1 engineering sources where available.
 - [x] Update tests and the critic rule. The focused suite now has 25 passing tests.
-- [ ] Repeat the final full pipeline check after the external Groq provider access block (`403 Forbidden`) clears. Earlier Tier-1-first live validation retained five Tier-1 sources, but the final repeat was blocked before plan processing. **2026-09-03 finding:** attempted this re-check from the Claude Code remote sandbox with a freshly supplied Groq key. The request never reached Groq — the sandbox's own egress proxy rejects `CONNECT api.groq.com:443` with a `403` at the organization-policy level (confirmed via the proxy's own `/__agentproxy/status`, which lists `api.groq.com:443` under `recentRelayFailures` as `connect_rejected`). This is a property of this remote execution environment, not evidence about Groq-side access. The freshly supplied key itself was never actually validated against Groq's API and should be rotated since it was shared in chat regardless. Re-run this check from an environment whose network policy allows `api.groq.com`.
+- [x] Repeat the final full pipeline check after the external Groq provider access block (`403 Forbidden`) clears. **Done 2026-10-04** from a sandbox that allows `api.groq.com`: full runs of the demo plan and the LedgerLoop PRD succeeded with no fallback stages (see the section below). Earlier Tier-1-first live validation retained five Tier-1 sources, but the final repeat was blocked before plan processing. **2026-09-03 finding:** attempted this re-check from the Claude Code remote sandbox with a freshly supplied Groq key. The request never reached Groq — the sandbox's own egress proxy rejects `CONNECT api.groq.com:443` with a `403` at the organization-policy level (confirmed via the proxy's own `/__agentproxy/status`, which lists `api.groq.com:443` under `recentRelayFailures` as `connect_rejected`). This is a property of this remote execution environment, not evidence about Groq-side access. The freshly supplied key itself was never actually validated against Groq's API and should be rotated since it was shared in chat regardless. Re-run this check from an environment whose network policy allows `api.groq.com`.
 - [x] Commit and push the validated reliability improvements. Landed in `b8cf014` (`fix: harden compact qwen analysis stages`), already on `origin/main`.
 
 ## New Groq Key Verification Runner
@@ -189,3 +189,14 @@
 ## Current Code Guide
 
 - [x] Create a concise current structure and code-flow guide for the unified PreMortem dashboard, secure backend, and data store.
+
+## Stated Mitigations and Severity Cap (2026-10-04)
+
+- [x] Keep a plan's stated mitigations apart from its missing controls (#12). `statedMitigations` hold only measures the plan offers against a named risk, written `risk: mitigation`; `missingControls` keep real gaps, including a target with no validation plan.
+- [x] Live-test #12 with a new Groq key on the demo plan and the LedgerLoop PRD, compare with `main`, and fix the over-correction it showed (lost rollback and ML precision risks, unrelated mitigations copied into risks).
+- [x] Enforce at most two risks at severity 5 in code (#13).
+- [x] Re-check the human approval, mock-action, verification, and replan loop through the live API.
+- [ ] Deploy the backend and dashboard (`DEPLOYMENT.md`) and add the public dashboard URL to `README.md`.
+- [ ] Re-check the demo plan once more: in the last run its unrehearsed-rollback gap appeared in the facts and the critic but not as its own risk, which looked like run-to-run variance.
+- [ ] Optional: show `statedMitigations` and `missingControls` in the dashboard.
+- [ ] Revoke any Groq key that was pasted into a chat (see `SECURITY_AUDIT.md`).
