@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { AlertTriangle, ArrowRight, BadgeCheck, BookOpenText, CalendarDays, ChevronRight, CircleCheck, CircleDashed, CheckCircle2, ClipboardCheck, FileSearch, FlaskConical, GitFork, Layers3, ListTodo, LoaderCircle, LogOut, Network, RotateCcw, Search, ShieldCheck, Sparkles, UserRoundCheck, Waypoints } from "lucide-react";
+import { AlertTriangle, ArrowRight, BadgeCheck, BookOpenText, CalendarDays, ChevronRight, CircleCheck, CircleDashed, CheckCircle2, ClipboardCheck, FileSearch, FlaskConical, GitFork, Layers3, ListTodo, LoaderCircle, Network, RotateCcw, Search, ShieldCheck, Sparkles, UserRoundCheck, Waypoints } from "lucide-react";
 import { approveMockAction, createAnalysis, createProject, getAnalysis, getSession, listProjectAnalyses, listProjects, renameProject, signOut, submitMitigation, verifyMockAction } from "@/lib/api";
 import { demoAnalysis, samplePlan } from "@/lib/demo";
 import { matrixStatus } from "@/lib/matrix";
@@ -296,7 +296,7 @@ export default function DashboardPage() {
         <nav className="nav" aria-label="Workspace sections">
           {nav.map(([Icon, label, href], index) => <a key={label} className={index === 0 ? "active" : ""} href={href}><Icon size={15} />{label}</a>)}
         </nav>
-        <div className="side-note"><span className="kicker">Decision support</span><br />Risk findings are evidence-linked hypotheses, not project predictions.{session && <button className="signout" type="button" onClick={leaveWorkspace}><LogOut size={13} /> Sign out</button>}</div>
+        <div className="side-note"><span className="kicker">Decision support</span><br />Risk findings are evidence-linked hypotheses, not project predictions.</div>
       </aside>
 
       <main className="main">
@@ -309,7 +309,7 @@ export default function DashboardPage() {
           <div className="live-stage-list">{liveStages.map(([number, label, detail, href, Icon], index) => <a href={href} className={`live-stage ${running && index < 2 ? "working" : ""}`} key={number}><span className="live-stage-number">{number}</span><Icon size={16} /><span><strong>{label}</strong><small>{detail}</small></span>{index < liveStages.length - 1 && <ArrowRight className="live-stage-arrow" size={15} />}</a>)}</div>
         </section>
 
-        {session ? <ProjectHub session={session} projects={projects} projectId={projectId} history={history} loading={historyLoading} onSelect={selectManagedProject} onCreate={createManagedProject} onRename={renameManagedProject} onOpenRun={openSavedRun} /> : <div className="guest-banner"><span><Sparkles size={15} /> Illustrative dossier only</span><button type="button" className="text-action" onClick={() => setGuestDemo(false)}>Sign in to run your own review <ArrowRight size={14} /></button></div>}
+        {session ? <ProjectHub session={session} projects={projects} projectId={projectId} history={history} loading={historyLoading} onSelect={selectManagedProject} onCreate={createManagedProject} onRename={renameManagedProject} onOpenRun={openSavedRun} onSignOut={leaveWorkspace} /> : <div className="guest-banner"><span><Sparkles size={15} /> Illustrative dossier only</span><button type="button" className="text-action" onClick={() => setGuestDemo(false)}>Sign in to run your own review <ArrowRight size={14} /></button></div>}
 
         <section id="workspace" className="workspace" aria-labelledby="intake-title">
           <div className="card intake">
