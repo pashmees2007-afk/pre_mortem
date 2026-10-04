@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Config } from "./config.js";
 import type { EvidenceSource, InvestigationPlan, PlanFacts, Scenario, Synthesis } from "./contracts.js";
-import { PreMortemEngine, fallbackScenario, labelEvidence } from "./engine.js";
+import { PreMortemEngine, dropCoveredGaps, fallbackScenario, labelEvidence } from "./engine.js";
 import { UpstreamError } from "./errors.js";
 
 const runId = "11111111-1111-4111-8111-111111111111";
@@ -149,5 +149,65 @@ describe("branch angles and risk count", () => {
     await engine.run(runId);
     expect(completed().synthesis.risks).toHaveLength(4);
     expect(trace("Decision Skill")).toMatchObject({ metadata: { fallback: false } });
+  });
+});
+
+describe("stated mitigations", () => {
+  it("passes the plan's stated mitigations to the synthesis, separately from missing controls", async () => {
+    const stated = ["confidence threshold and reversible write-back for false matches"];
+    const { engine, groq } = harness({ plan_facts: () => ({ ...facts, statedMitigations: stated }) });
+    await engine.run(runId);
+    const synthesis = groq.strictJson.mock.calls.map(([call]) => call as { name: string; user: string }).find((call) => call.name === "risk_synthesis")!.user;
+    expect(synthesis).toContain("STATED_MITIGATIONS");
+    expect(synthesis).toContain(stated[0]);
+  });
+
+  it("still accepts facts saved before statedMitigations existed", async () => {
+    const { PlanFactsSchema } = await import("./contracts.js");
+    expect(PlanFactsSchema.safeParse(facts).success).toBe(true);
+    expect(PlanFactsSchema.safeParse({ ...facts, statedMitigations: ["dry-run mode by default"] }).success).toBe(true);
+  });
+});
+
+describe("fallback scenario wording", () => {
+  it("reads a missing control written as 'No ...' as a plain sentence", () => {
+    const evidence = [{ id: "5d1f6f1e-0000-4000-8000-000000000001", branch: "A", status: "retrieved", sourceTier: 1 }] as EvidenceSource[];
+    const result = fallbackScenario({ branch: "A", facts: { ...facts, missingControls: ["No buffer for audit delays", "a rehearsed rollback procedure"] }, plan, evidence })!;
+    expect(result.claims.map((claim) => claim.statement)).toEqual(["The plan has no buffer for audit delays.", "The plan does not yet show a rehearsed rollback procedure."]);
+    expect(result.rootCause).toBe("The plan has no buffer for audit delays.");
+  });
+});
+
+describe("missing controls the plan already mitigates", () => {
+  // Facts as the model returned them for a long PRD: two gaps repeat risks the plan states a mitigation for.
+  const extracted: PlanFacts = {
+    ...facts,
+    statedMitigations: [
+      "Tally support load: limit to Tally Prime 4.0+ and guided installer",
+      "SOC 2 delays: start controls and evidence collection in Phase 1",
+      "Regulatory changes: monthly compliance consultant review",
+      "False matches: confidence threshold, reversible write-back, and dry-run mode",
+    ],
+    missingControls: [
+      "No schedule buffer between phases",
+      "No validation plan for 92% auto-match target",
+      "No contingency for Tally support load",
+      "No fallback if SOC 2 audit fails",
+      "No plan for regulatory changes to AA rules",
+    ],
+  };
+
+  it("drops a gap that names every word of a stated risk", () => {
+    expect(dropCoveredGaps(extracted).missingControls).toEqual([
+      "No schedule buffer between phases",
+      "No validation plan for 92% auto-match target",
+      "No fallback if SOC 2 audit fails",
+    ]);
+  });
+
+  it("leaves facts without labelled stated mitigations unchanged", () => {
+    expect(dropCoveredGaps(facts)).toEqual(facts);
+    const unlabelled = { ...extracted, statedMitigations: ["confidence threshold and reversible write-back"] };
+    expect(dropCoveredGaps(unlabelled).missingControls).toEqual(extracted.missingControls);
   });
 });

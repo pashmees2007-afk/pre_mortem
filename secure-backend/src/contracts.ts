@@ -102,6 +102,9 @@ export const PlanFactsSchema = z.object({
   dependencies: z.array(z.string().min(2).max(250)).max(12),
   technicalChanges: z.array(z.string().min(2).max(250)).max(12),
   missingControls: z.array(z.string().min(2).max(250)).max(12),
+  // Measures the plan itself offers to reduce a named risk (not schedules, constraints or targets). Kept apart from
+  // missingControls so a stated-but-unproven mitigation is not reported as missing; optional for older facts.
+  statedMitigations: z.array(z.string().min(2).max(250)).max(8).optional(),
 }).strict();
 
 export const EvidenceSourceSchema = z.object({
@@ -205,8 +208,9 @@ export const jsonSchemas = {
       dependencies: { type: "array", items: { type: "string" } },
       technicalChanges: { type: "array", items: { type: "string" } },
       missingControls: { type: "array", items: { type: "string" } },
+      statedMitigations: { type: "array", items: { type: "string" } },
     },
-    required: ["outcome", "timeline", "team", "dependencies", "technicalChanges", "missingControls"],
+    required: ["outcome", "timeline", "team", "dependencies", "technicalChanges", "missingControls", "statedMitigations"],
   },
   scenario: {
     type: "object", additionalProperties: false,

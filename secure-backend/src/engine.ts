@@ -146,6 +146,29 @@ function fallbackCritic(args: { plan: InvestigationPlan; comparison: Comparison;
   };
 }
 
+const GAP_STOPWORDS = new Set(["the", "and", "for", "with", "from", "into", "plan", "risk", "not", "yet", "any"]);
+const gapWords = (text: string) => text.toLowerCase().split(/[^a-z0-9]+/)
+  .filter((word) => word.length >= 3 || /^\d+$/.test(word)).filter((word) => !GAP_STOPWORDS.has(word))
+  .map((word) => word.replace(/s$/, ""));
+
+/**
+ * The model sometimes lists a risk under missingControls even though the plan states a mitigation for it.
+ * statedMitigations read "risk: mitigation", so drop a missing control only when it names every word of a
+ * stated risk ("No plan for regulatory changes" vs "Regulatory changes: ..."). A gap that only shares a word
+ * or two with a stated risk, such as an unvalidated accuracy target, stays missing.
+ */
+export function dropCoveredGaps(facts: PlanFacts): PlanFacts {
+  const statedRisks = (facts.statedMitigations ?? [])
+    .map((item) => item.includes(":") ? gapWords(item.slice(0, item.indexOf(":"))) : [])
+    .filter((words) => words.length > 0);
+  if (!statedRisks.length) return facts;
+  const missingControls = facts.missingControls.filter((gap) => {
+    const words = new Set(gapWords(gap));
+    return !statedRisks.some((risk) => risk.every((word) => words.has(word)));
+  });
+  return { ...facts, missingControls };
+}
+
 /**
  * A scenario built from the plan's own facts when the model's scenario cannot be validated, so one bad
  * response no longer fails the whole run. Each claim cites this branch's own retrieved evidence, and the
@@ -157,14 +180,16 @@ export function fallbackScenario(args: { branch: "A" | "B"; facts: PlanFacts; pl
   if (!cited.length) return null;
   const category = args.plan.angles.find((angle) => angle.branch === args.branch)?.category ?? "operational_readiness";
   const gaps = args.facts.missingControls.length ? args.facts.missingControls.slice(0, 3) : [`a verified control for: ${args.facts.outcome}`];
+  // missingControls are often written as "No buffer for audit delays"; read those as "The plan has no ...".
+  const gapSentence = (gap: string) => /^no\s/i.test(gap) ? `The plan has no ${gap.replace(/^no\s+/i, "")}.` : `The plan does not yet show ${gap}.`;
   return ScenarioSchema.parse({
     primaryCategory: category,
     contributingCategories: [],
-    rootCause: `The plan does not yet show ${gaps[0]}.`.slice(0, 180),
+    rootCause: gapSentence(gaps[0]!).slice(0, 180),
     narrative: `Rule-based scenario for branch ${args.branch}: the model's scenario could not be validated, so this one is built from the plan's own facts. The plan (${args.facts.outcome}, ${args.facts.timeline}) lists these missing controls: ${gaps.join("; ")}. Each claim cites a source this branch retrieved; impact and likelihood are conservative defaults, not model estimates.`.slice(0, 1_200),
     claims: gaps.map((gap, index) => ({
       category,
-      statement: `The plan does not yet show ${gap}.`.slice(0, 320),
+      statement: gapSentence(gap).slice(0, 320),
       evidenceIds: [cited[index % cited.length]!.id],
       impact: 4,
       likelihood: 3,
@@ -242,7 +267,7 @@ export class PreMortemEngine {
     const searchesBeforeRun = this.searcher.getSearchCount?.();
     try {
       await this.repo.clearTransientArtifacts(run.id);
-      const facts = await this.groq.strictJson({
+      const facts = dropCoveredGaps(await this.groq.strictJson({
         name: "plan_facts",
         schema: (await import("./contracts.js")).jsonSchemas.planFacts,
         output: PlanFactsSchema,
@@ -250,7 +275,7 @@ export class PreMortemEngine {
         user: dataBlock("PLAN_DATA", run.plan),
         actorId: run.requestedBy,
         maxCompletionTokens: 800,
-      });
+      }));
 
       await this.repo.recordTrace({
         runId: run.id,
@@ -431,6 +456,7 @@ export class PreMortemEngine {
             dataBlock("SCENARIO_A", comparisonCard(scenarioA, labels)),
             dataBlock("SCENARIO_B", comparisonCard(scenarioB, labels)),
             dataBlock("COMPARISON", comparison),
+            dataBlock("STATED_MITIGATIONS", facts.statedMitigations ?? []),
             dataBlock("ALLOWED_EVIDENCE", synthesisEvidenceCards(allowedEvidence, [scenarioA, scenarioB], labels)),
           ].join("\n"),
           actorId: run.requestedBy,
