@@ -10,7 +10,7 @@ import { createSearcher } from "./search.js";
 
 const require = createRequire(import.meta.url);
 const Redis = require("ioredis") as new (url: string, options: Record<string, unknown>) => {
-  duplicate: () => unknown;
+  duplicate: () => { quit: () => Promise<unknown> };
   quit: () => Promise<string>;
   eval: (...args: unknown[]) => Promise<unknown>;
 };
