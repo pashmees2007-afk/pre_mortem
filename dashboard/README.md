@@ -1,6 +1,6 @@
-# Pre-Mortem Next.js Dashboard
+# PreMortem Next.js Dashboard
 
-This package is the React/Next.js decision-support interface for the secure Pre-Mortem backend. It visualizes the pre-mortem workflow as an auditable record: a submitted plan, separated evidence branches, a visible disagreement matrix, an evidence-linked risk register, and reversible mitigation scoring.
+This package is the React/Next.js decision-support interface for the secure PreMortem backend. It visualizes the pre-mortem workflow as an auditable record: a submitted plan, separated evidence branches, a visible disagreement matrix, an evidence-linked risk register, and reversible mitigation scoring.
 
 ## Security model
 
@@ -51,7 +51,7 @@ The proxy route rejects every other backend path. It does not permit generic age
 
 ## UX structure
 
-The dashboard starts with sign-in or workspace creation, then provides project creation, selection, and renaming instead of exposing raw UUIDs. The workspace persists up to 30 runs per project, automatically detects a saved queued/running run after reload, and resumes polling for up to roughly nine minutes. The intake card submits only plan text and the server-owned selected project. The disagreement matrix places independent branches side-by-side and shows the deterministic display status, category relationship, and evidence overlap. The risk register exposes severity, uncertainty, source links, and a selected-risk mitigation panel. Finally, the evidence ledger preserves the source record used by each branch rather than presenting invented citations.
+The dashboard starts with sign-in or workspace creation, then provides project creation, selection, and renaming instead of exposing raw UUIDs. The workspace persists up to 30 runs per project, automatically detects a saved queued/running run after reload, and resumes polling for up to roughly nine minutes. Opening a saved run also loads its submitted plan back into the intake card. The intake card submits only plan text and the server-owned selected project. The disagreement matrix places independent branches side-by-side and shows the deterministic display status, category relationship, and evidence overlap. The risk register exposes severity, uncertainty, source links, and a selected-risk mitigation panel. Finally, the evidence ledger preserves the source record used by each branch rather than presenting invented citations.
 
 ## Production notes
 
