@@ -33,7 +33,9 @@ export function createRouter(args: { config: Config; repo: Repository; queue: An
       const input = PasswordResetRequestInput.parse(req.body);
       const created = await args.repo.createPasswordResetToken(input.email);
       if (created && args.mailer) {
-        const base = (args.config.APP_BASE_URL ?? "http://localhost:3100").replace(/\/$/, "");
+        // Falls back to the dashboard's actual local dev port: the backend takes 3000
+        // (see secure-backend/.env.example), so `next dev` always lands on 3001 next to it.
+        const base = (args.config.APP_BASE_URL ?? "http://localhost:3001").replace(/\/$/, "");
         const resetUrl = `${base}/?resetToken=${encodeURIComponent(created.token)}`;
         await args.mailer.send({
           to: created.email,
