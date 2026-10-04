@@ -335,7 +335,7 @@ export class PreMortemEngine {
       const scenarioFallbacks: Array<"A" | "B"> = [];
       const scenarioFor = async (evidence: EvidenceSource[], branch: "A" | "B", model: string) => {
         try {
-          return await this.createScenario(run.plan, facts, evidence, branch, run.requestedBy, model, labels);
+          return await this.createScenario(run.plan, facts, evidence, branch, run.requestedBy, model, labels, investigationPlan);
         } catch (error) {
           const fallback = error instanceof UpstreamError ? fallbackScenario({ branch, facts, plan: investigationPlan, evidence }) : null;
           if (!fallback) throw error;
@@ -477,14 +477,20 @@ export class PreMortemEngine {
     }
   }
 
-  private async createScenario(plan: string, facts: unknown, evidence: EvidenceSource[], branch: "A" | "B", actorId: string, model: string, labels: EvidenceLabels): Promise<Scenario> {
+  private async createScenario(plan: string, facts: unknown, evidence: EvidenceSource[], branch: "A" | "B", actorId: string, model: string, labels: EvidenceLabels, investigationPlan: InvestigationPlan): Promise<Scenario> {
+    // Each branch writes from its own planner-assigned angle, not only its own evidence, so the two
+    // hypotheses differ in what they look for as well as in what they read.
+    const angle = {
+      angles: investigationPlan.angles.filter((item) => item.branch === branch).map(({ category, reason }) => ({ category, reason })),
+      researchQuery: investigationPlan.researchQueries[branch],
+    };
     const labelled = await this.groq.strictJson({
       model,
       name: `scenario_${branch.toLowerCase()}`,
       schema: (await import("./contracts.js")).jsonSchemas.scenario,
       output: ModelScenarioSchema,
       system: SYSTEM.scenario(branch),
-      user: [dataBlock("PLAN_DATA", plan), dataBlock("PLAN_FACTS", facts), dataBlock("EVIDENCE_CARDS", evidenceCards(evidence, labels))].join("\n"),
+      user: [dataBlock("PLAN_DATA", plan), dataBlock("PLAN_FACTS", facts), dataBlock("RESEARCH_ANGLE", angle), dataBlock("EVIDENCE_CARDS", evidenceCards(evidence, labels))].join("\n"),
       actorId,
       maxCompletionTokens: 700,
     });
