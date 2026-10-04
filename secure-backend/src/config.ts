@@ -10,6 +10,9 @@ const EnvSchema = z.object({
   // Qwen performs all schema-constrained reasoning; the retrieval model (GPT-OSS browser_search, or a
   // groq/compound* model where the account has access) stays retrieval-only.
   GROQ_STRUCTURED_MODEL: z.string().min(3).default("qwen/qwen3.8-27b"),
+  // Optional: with a Tavily key, evidence retrieval uses the Tavily search API instead of GROQ_RETRIEVAL_MODEL,
+  // so searches spend no Groq tokens. Basic-depth searches cost one Tavily credit each.
+  TAVILY_API_KEY: z.string().min(10).optional(),
   // Optional second model family for branch B's scenario only, so the two branches don't share one
   // model's blind spots. Unset keeps both branches on GROQ_STRUCTURED_MODEL; each run's trace records which applied.
   GROQ_STRUCTURED_MODEL_B: z.string().min(3).optional(),

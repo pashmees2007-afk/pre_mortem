@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { Config } from "./config.js";
 import { UpstreamError } from "./errors.js";
+import type { WebSearchArgs, WebSearcher } from "./search.js";
 
 type GroqMessage = { role: "system" | "user"; content: string };
 type GroqResponse = {
@@ -59,7 +60,8 @@ function parseJsonObject(text: string): unknown {
   }
 }
 
-export class GroqClient {
+export class GroqClient implements WebSearcher {
+  readonly sharesGroqBudget = true;
   private structuredRequestTail: Promise<void> = Promise.resolve();
   private usage: GroqUsageTotals = { requests: 0, promptTokens: 0, completionTokens: 0, totalTokens: 0 };
 
@@ -224,8 +226,9 @@ export class GroqClient {
     return repairedParsed.data;
   }
 
-  async webSearch(args: { query: string; actorId: string; includeDomains?: string[] }) {
+  async webSearch(args: WebSearchArgs) {
     const model = this.config.GROQ_RETRIEVAL_MODEL;
+    const query = args.instruction ? `${args.instruction} ${args.query}` : args.query;
     if (isCompoundModel(model)) {
       return this.requestWithOneRateRetry({
         model,
@@ -241,7 +244,7 @@ export class GroqClient {
             role: "system",
             content: "You are an evidence retrieval subskill. You MUST invoke the web_search tool exactly once before responding. Never answer from memory. Return concise source-grounded findings only.",
           },
-          { role: "user", content: `Find software-engineering failure precedents for this bounded research query. QUERY: ${args.query}` },
+          { role: "user", content: `Find software-engineering failure precedents for this bounded research query. QUERY: ${query}` },
         ] satisfies GroqMessage[],
       });
     }
@@ -264,7 +267,7 @@ export class GroqClient {
           role: "system",
           content: `You are an evidence retrieval subskill. Call browser_search exactly once, then call browser.open on at most two of its results, then answer. Do not search again and do not use browser.find: every extra browsing step re-sends the opened pages and multiplies token cost.${domainRule} Never answer from memory. Reply with one short sentence per opened page.`,
         },
-        { role: "user", content: `Find software-engineering failure precedents for this bounded research query. QUERY: ${args.query}` },
+        { role: "user", content: `Find software-engineering failure precedents for this bounded research query. QUERY: ${query}` },
       ] satisfies GroqMessage[],
     });
   }

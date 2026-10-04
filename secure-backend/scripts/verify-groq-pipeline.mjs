@@ -1,7 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { createContainer } from "../dist/container.js";
-import { GroqClient } from "../dist/groq.js";
 
 if (process.env.NODE_ENV === "production") throw new Error("This local-only runner must not run in production");
 
@@ -35,8 +34,8 @@ if (plan.length < 80) throw new Error("PREMORTEM_TEST_PLAN must contain at least
 let container;
 try {
   container = createContainer();
-  const { config, repo } = container;
-  const groq = new GroqClient(config);
+  const { config, repo, groq, searcher } = container;
+  const retrievalProvider = searcher === groq ? config.GROQ_RETRIEVAL_MODEL : "tavily";
 
   await groq.strictJson({
     name: "qwen_key_probe",
@@ -65,7 +64,7 @@ try {
     });
   }
 
-  const retrieval = await groq.webSearch({
+  const retrieval = await searcher.webSearch({
     query: "official Kubernetes deployment rollback guidance",
     actorId: actor.sub,
     includeDomains: ["kubernetes.io"],
@@ -75,13 +74,13 @@ try {
     const searchResults = record && typeof record === "object" ? record.search_results : undefined;
     return Array.isArray(searchResults) ? searchResults : Array.isArray(searchResults?.results) ? searchResults.results : [];
   }) ?? [];
-  if (!retrieved.length) throw new Error(`${config.GROQ_RETRIEVAL_MODEL} responded but returned no web-search records`);
+  if (!retrieved.length) throw new Error(`${retrievalProvider} responded but returned no web-search records`);
 
   const probe = {
     status: "key_verified",
     structuredModel: config.GROQ_STRUCTURED_MODEL,
     branchBModel: modelB ?? `${config.GROQ_STRUCTURED_MODEL} (same as branch A; set GROQ_STRUCTURED_MODEL_B for model diversity)`,
-    retrievalModel: config.GROQ_RETRIEVAL_MODEL,
+    retrievalProvider,
     qwenStructuredOutput: "passed",
     branchBStructuredOutput: modelB ? "passed" : "not separately configured",
     webSearchRecords: retrieved.length,

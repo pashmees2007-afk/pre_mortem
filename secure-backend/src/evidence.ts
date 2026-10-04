@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { EvidenceSource, PlanFacts } from "./contracts.js";
-import { GroqClient } from "./groq.js";
+import type { WebSearcher, WebSearchResponse } from "./search.js";
 
 export type EvidenceTopic = "engineering" | "fintech";
 type Branch = "A" | "B";
@@ -76,7 +76,7 @@ type RawRecord = { title: string; snippet: string; score: number | null };
 
 /** Merges every tool record for one URL: Compound returns title and content together, while GPT-OSS
  * returns a titled but empty search hit and, separately, the opened page's text. */
-function collectRecords(response: Awaited<ReturnType<GroqClient["webSearch"]>>) {
+function collectRecords(response: WebSearchResponse) {
   const tools = response.choices?.[0]?.message?.executed_tools ?? [];
   const raw = tools.flatMap((tool: any) => {
     const searchResults = tool?.search_results;
@@ -102,7 +102,7 @@ function collectRecords(response: Awaited<ReturnType<GroqClient["webSearch"]>>) 
   return records;
 }
 
-function extractEvidence(args: { response: Awaited<ReturnType<GroqClient["webSearch"]>>; branch: Branch; seen: Set<string>; excludedSites: Set<string>; sources: EvidenceSource[]; onlyDomains?: string[] }) {
+function extractEvidence(args: { response: WebSearchResponse; branch: Branch; seen: Set<string>; excludedSites: Set<string>; sources: EvidenceSource[]; onlyDomains?: string[] }) {
   const { response, branch, seen, excludedSites, sources, onlyDomains } = args;
   const now = new Date().toISOString();
   for (const [href, item] of collectRecords(response)) {
@@ -123,7 +123,7 @@ function extractEvidence(args: { response: Awaited<ReturnType<GroqClient["webSea
 }
 
 export async function retrieveEvidence(args: {
-  client: GroqClient; facts: PlanFacts; branch: Branch; actorId: string; includeDomains?: string[]; plannedQuery?: string;
+  client: WebSearcher; facts: PlanFacts; branch: Branch; actorId: string; includeDomains?: string[]; plannedQuery?: string;
   topic?: EvidenceTopic;
   /** Hostnames the other branch already retained; their whole sites are off-limits to this branch. */
   excludeHostnames?: string[];
@@ -137,8 +137,8 @@ export async function retrieveEvidence(args: {
   const excludedSites = new Set([...tierOneDomainsFor(topic, otherBranch), ...(args.excludeHostnames ?? [])].map(siteKey));
   const seen = new Set<string>();
   const sources: EvidenceSource[] = [];
-  const trustedQuery = `Find official guidance, control expectations, engineering documentation, production guidance, or incident learning relevant to this project-risk question. ${query}`;
-  const trustedResponse = await args.client.webSearch({ query: trustedQuery, actorId: args.actorId, includeDomains: trustedDomains });
+  const trustedInstruction = "Find official guidance, control expectations, engineering documentation, production guidance, or incident learning relevant to this project-risk question.";
+  const trustedResponse = await args.client.webSearch({ query, instruction: trustedInstruction, actorId: args.actorId, includeDomains: trustedDomains });
   extractEvidence({ response: trustedResponse, branch: args.branch, seen, excludedSites, sources, onlyDomains: trustedDomains });
   if (sources.length >= 2) return sources;
 
@@ -149,7 +149,8 @@ export async function retrieveEvidence(args: {
 
   // Some narrow research angles yield a single result. Ask again for official guidance before declaring evidence insufficient.
   const trustedRetry = await args.client.webSearch({
-    query: `Find an additional official engineering source for a pre-mortem. Project outcome: ${args.facts.outcome}. Missing controls: ${args.facts.missingControls.join("; ")}`.slice(0, 900),
+    query: `${args.facts.outcome}. Missing controls: ${args.facts.missingControls.join("; ")}`.slice(0, 900),
+    instruction: "Find an additional official engineering source for a pre-mortem. Project outcome:",
     actorId: args.actorId,
     includeDomains: trustedDomains,
   });
