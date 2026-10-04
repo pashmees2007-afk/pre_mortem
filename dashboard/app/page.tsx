@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { AlertTriangle, ArrowRight, BadgeCheck, BookOpenText, CalendarDays, ChevronRight, CircleCheck, CircleDashed, CheckCircle2, ClipboardCheck, FileSearch, FlaskConical, GitFork, Layers3, ListTodo, LoaderCircle, Network, RotateCcw, Search, ShieldCheck, Sparkles, UserRoundCheck, Waypoints } from "lucide-react";
+import { AlertTriangle, ArrowRight, BadgeCheck, BookOpenText, CalendarDays, ChevronRight, CircleCheck, CircleDashed, CheckCircle2, ClipboardCheck, FileSearch, FlaskConical, GitFork, Layers3, ListTodo, LoaderCircle, Network, Printer, RotateCcw, Search, ShieldCheck, Sparkles, UserRoundCheck, Waypoints } from "lucide-react";
 import { approveMockAction, createAnalysis, createProject, getAnalysis, getSession, listProjectAnalyses, listProjects, renameProject, signOut, submitMitigation, verifyMockAction } from "@/lib/api";
 import { demoAnalysis, samplePlan } from "@/lib/demo";
 import { matrixStatus } from "@/lib/matrix";
@@ -301,7 +301,7 @@ export default function DashboardPage() {
       </aside>
 
       <main className="main">
-        <div className="topline"><span className="eyebrow">Evidence-led delivery review</span><span className="status"><span className="dot" />{isDemo ? "Example dossier" : analysis.status}</span></div>
+        <div className="topline"><span className="eyebrow">Evidence-led delivery review</span><span className="topline-actions">{analysis.status === "succeeded" && <button type="button" className="button quiet no-print" onClick={() => window.print()}><Printer size={14} /> Print / Save as PDF</button>}<span className="status"><span className="dot" />{isDemo ? "Example dossier" : analysis.status}</span></span></div>
         <h1>Find the failure path.<br /><em>Then close the loop.</em></h1>
         <p className="lede">This is the live Agent Map: a project plan moves through independent research, evidence challenge, human-approved action, and verified learning.</p>
 
@@ -335,7 +335,7 @@ export default function DashboardPage() {
 
         {analysis.status !== "succeeded" ? <div className="empty" style={{ marginTop: 36 }}>{analysis.status === "failed" ? "This run did not complete. The backend recorded a failure state rather than fabricating a result." : "The secure backend is collecting and comparing evidence. This workspace will update when the run completes."}</div> : <>
           <section id="agent-flow" className="section" aria-labelledby="agent-flow-title">
-            <div className="section-head"><div><span className="eyebrow">Inspectable orchestration</span><h2 id="agent-flow-title" className="section-title">Agent activity trace</h2></div><p className="section-caption">The agent starts with a project goal, chooses risk angles, researches evidence, compares branches, asks for approval, and verifies action outcomes.</p></div>
+            <div className="section-head"><div><span className="eyebrow">What the AI did, step by step</span><h2 id="agent-flow-title" className="section-title">Agent activity trace</h2></div><p className="section-caption">Each line is one step, in order. Steps marked with a warning need a second look: the AI found a gap, or used a simple backup rule because its own answer could not be checked.</p></div>
             <div className="agent-flow-layout">
               <div className="card trace-card"><div className="trace-heading"><div><span className="mono">Observed sequence</span><strong>Every completed or attention-needed agent step</strong></div><span className="pill teal">{analysis.trace.length} events</span></div><div className="trace-list">{analysis.trace.map((event, index) => <TraceItem event={event} index={index} key={`${event.createdAt}-${event.stage}-${index}`} />)}</div></div>
               <aside className="agent-side-stack">
@@ -345,20 +345,20 @@ export default function DashboardPage() {
             </div>
           </section>
           <section id="matrix" className="section" aria-labelledby="matrix-title">
-            <div className="section-head"><div><span className="eyebrow">Independent branches</span><h2 id="matrix-title" className="section-title">Disagreement matrix</h2></div><p className="section-caption">The matrix compares branch-specific primary causes, evidence overlap, and the reason the system did—or did not—flag disagreement.</p></div>
+            <div className="section-head"><div><span className="eyebrow">Where the two investigations agree or disagree</span><h2 id="matrix-title" className="section-title">Disagreement matrix</h2></div><p className="section-caption">Two research branches investigated the plan separately, each from its own angle and its own sources. This shows whether they found the same main problem, and how many sources they shared.</p></div>
             <div className="card matrix">
               <div className="matrix-top"><div><span className="mono">Comparison result</span><strong style={{ display: "block", marginTop: 4, fontSize: 14 }}>{matrix.label}</strong></div><span className={tonePill(matrix.tone)}>{analysis.disagreement?.semanticRelation ?? "unresolved"}</span></div>
               <div className="matrix-grid">
-                {analysis.branches[0] ? <Branch branch={analysis.branches[0]} sources={analysis.sources} /> : <div className="branch">Branch A unavailable</div>}
+                {analysis.branches[0] ? <Branch branch={analysis.branches[0]} sources={analysis.sources} /> : <div className="branch">Branch A found no usable result</div>}
                 <div className="centerline"><div className="relation">{analysis.disagreement?.categoryRelation ?? "unknown"}<br /><ArrowRight size={15} style={{ marginTop: 6 }} /></div><span className="hint" style={{ marginTop: 10 }}>evidence overlap<br /><strong style={{ color: "var(--ink)" }}>{Math.round((analysis.disagreement?.evidenceOverlap ?? 0) * 100)}%</strong></span></div>
-                {analysis.branches[1] ? <Branch branch={analysis.branches[1]} sources={analysis.sources} /> : <div className="branch">Branch B unavailable</div>}
+                {analysis.branches[1] ? <Branch branch={analysis.branches[1]} sources={analysis.sources} /> : <div className="branch">Branch B found no usable result</div>}
               </div>
               <div className="matrix-note"><strong>Why this status:</strong> {analysis.disagreement?.explanation ?? matrix.description}</div>
             </div>
           </section>
 
           <section id="risks" className="section" aria-labelledby="risks-title">
-            <div className="section-head"><div><span className="eyebrow">Prioritized decision record</span><h2 id="risks-title" className="section-title">Evidence-linked risk register</h2></div><p className="section-caption">Severity is calculated from impact and likelihood. It is not an opaque model confidence score.</p></div>
+            <div className="section-head"><div><span className="eyebrow">The biggest dangers, ranked</span><h2 id="risks-title" className="section-title">Risk register</h2></div><p className="section-caption">Each risk links to the sources behind it. Severity is how bad it would be (impact) combined with how likely it is (likelihood), on a 1–5 scale, not an AI confidence score.</p></div>
             <div className="risk-layout">
               <div className="risk-list">{analysis.risks.map((risk) => <RiskItem key={risk.id} risk={risk} selected={risk.id === selectedRisk?.id} onSelect={() => setSelectedRiskId(risk.id)} sourceCount={risk.evidenceIds.length} />)}</div>
               {selectedRisk && <RiskDetail risk={selectedRisk} sources={sourceFor(selectedRisk, analysis.sources)} answer={mitigationAnswer} onAnswer={setMitigationAnswer} onSubmit={assessMitigation} loading={submittingMitigation} />}
@@ -366,7 +366,7 @@ export default function DashboardPage() {
           </section>
 
           <section id="actions" className="section" aria-labelledby="actions-title">
-            <div className="section-head"><div><span className="eyebrow">Human-in-the-loop control</span><h2 id="actions-title" className="section-title">Approval, action, and verification</h2></div><p className="section-caption">The agent cannot close a risk by itself. A person approves a safe mock action, then verifies the result or sends the case back for replanning.</p></div>
+            <div className="section-head"><div><span className="eyebrow">You stay in control</span><h2 id="actions-title" className="section-title">Approval, action, and verification</h2></div><p className="section-caption">The AI cannot close a risk on its own. A person approves a fix, then records whether it worked; if it did not, the plan goes back for a new fix. Actions stay inside PreMortem; nothing is sent to Jira or GitHub.</p></div>
             <div className="action-layout">
               <article className="card approval-card"><div className="approval-head"><span className="seal"><UserRoundCheck size={15} /></span><div><span className="eyebrow">Human approval gate</span><h3>{selectedRisk?.title ?? "Select a risk"}</h3></div></div><p>Approve only a reversible mock action. This MVP records the decision inside PreMortem and does not change Jira, GitHub, or any external project tool.</p><div className="control-grid"><label className="label">Action owner<input className="textarea control-input" value={actionOwner} onChange={(event) => setActionOwner(event.target.value)} /></label><label className="label">Due date<input type="date" className="textarea control-input" value={actionDueDate} onChange={(event) => setActionDueDate(event.target.value)} /></label></div><label className="label">Approval note<textarea className="textarea control-note" value={approvalNote} onChange={(event) => setApprovalNote(event.target.value)} /></label><button className="button primary" onClick={approveAction} disabled={savingAction || !selectedRisk || selectedRiskHasOpenAction || approvalNote.trim().length < 8}>{savingAction ? <><LoaderCircle size={14} className="spin" /> Saving approval</> : <><BadgeCheck size={14} /> Approve mock action</>}</button>{selectedRiskHasOpenAction && <p className="hint" style={{ marginTop: 8 }}>This risk already has an approved action awaiting verification. Verify it or request a replan before approving another.</p>}</article>
               <article className="card action-board"><div className="action-board-head"><div><span className="eyebrow">Action board</span><h3>Approved mitigation cards</h3></div><span className="pill">{analysis.actions.length} recorded</span></div>{analysis.actions.length === 0 ? <div className="empty action-empty"><CircleDashed size={21} />No approved action yet. Assess a mitigation, then approve a safe mock task.</div> : <div className="action-list">{analysis.actions.map((action) => <ActionCard key={action.id} action={action} verificationNote={verificationNotes[action.id] ?? ""} onNote={(value) => setVerificationNotes((current) => ({ ...current, [action.id]: value }))} onVerify={verifyAction} loading={verifyingAction} />)}</div>}</article>
@@ -374,7 +374,7 @@ export default function DashboardPage() {
           </section>
 
           <section id="sources" className="section" aria-labelledby="sources-title">
-            <div className="section-head"><div><span className="eyebrow">Citable context</span><h2 id="sources-title" className="section-title">Evidence ledger</h2></div><p className="section-caption">Only retained source records can support a displayed risk. Sources remain visible beside the work they support.</p></div>
+            <div className="section-head"><div><span className="eyebrow">Every source the AI used</span><h2 id="sources-title" className="section-title">Evidence ledger</h2></div><p className="section-caption">A risk can only cite sources listed here. Tier 1 is official documentation from a trusted list, Tier 2 is a .gov, .edu or .org site, and Tier 3 is any other website.</p></div>
             <div className="sources">{analysis.sources.map((source) => <SourceCard source={source} key={source.id} />)}</div>
           </section>
         </>}
@@ -407,6 +407,9 @@ function ActionCard({ action, verificationNote, onNote, onVerify, loading }: { a
   return <article className={`action-item ${action.status}`}><div className="action-item-top"><div><span className="eyebrow">{action.status.replaceAll("_", " ")}</span><h4>{action.riskTitle ?? "Approved risk mitigation"}</h4></div><span className={`pill ${action.status === "replan_required" ? "high" : action.status === "verified" ? "teal" : ""}`}>{action.status.replaceAll("_", " ")}</span></div><p><strong>Owner:</strong> {action.owner} <span>·</span> <strong>Due:</strong> <CalendarDays size={12} /> {action.dueDate}</p><div className="approval-note"><strong>Approval record</strong>{action.approvalNote}</div>{closed ? <div className="verification-result">{action.status === "replan_required" ? <RotateCcw size={15} /> : <CircleCheck size={15} />}<span>{action.verificationNote ?? "No verification note recorded."}</span></div> : <div className="verify-control"><label className="label">Verification note<textarea className="textarea control-note" value={verificationNote} onChange={(event) => onNote(event.target.value)} placeholder="What happened when you checked the mitigation?" /></label><div className="verify-buttons"><button className="button quiet" disabled={loading || verificationNote.trim().length < 8} onClick={() => onVerify(action, "verified")}><CircleCheck size={14} /> Mark verified</button><button className="button signal-button" disabled={loading || verificationNote.trim().length < 8} onClick={() => onVerify(action, "failed")}><RotateCcw size={14} /> Request replan</button></div></div>}</article>;
 }
 
+const TIER_MEANINGS: Record<number, string> = { 1: "official docs", 2: ".gov, .edu or .org", 3: "general web" };
+function tierLabel(tier: number) { return TIER_MEANINGS[tier] ? `Tier ${tier} · ${TIER_MEANINGS[tier]}` : `Tier ${tier}`; }
+
 function SourceCard({ source }: { source: Source }) {
-  return <article className="card source"><div className="source-head"><span className="eyebrow">Branch {source.branch} · Tier {source.sourceTier}</span><span className="hint">rank {source.providerRank?.toFixed(2) ?? "—"}</span></div><h3>{source.title}</h3><p>{source.snippet}</p><a href={source.url} target="_blank" rel="noreferrer">{source.publisher ?? source.hostname} <ArrowRight size={10} style={{ verticalAlign: "-1px" }} /></a></article>;
+  return <article className="card source"><div className="source-head"><span className="eyebrow">Branch {source.branch} · {tierLabel(source.sourceTier)}</span><span className="hint">rank {source.providerRank?.toFixed(2) ?? "—"}</span></div><h3>{source.title}</h3><p>{source.snippet}</p><a href={source.url} target="_blank" rel="noreferrer">{source.publisher ?? source.hostname} <ArrowRight size={10} style={{ verticalAlign: "-1px" }} /></a></article>;
 }
