@@ -66,6 +66,7 @@ export const actionSchema = z.object({
 export const analysisSchema = z.object({
   id: z.string().uuid(),
   status: z.enum(["queued", "running", "succeeded", "failed"]),
+  plan: z.string().optional(),
   createdAt: z.string().optional(),
   completedAt: z.string().nullable().optional(),
   failureCode: z.string().nullable().optional(),
