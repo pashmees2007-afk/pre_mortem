@@ -14,6 +14,7 @@ export type GroqUsageTotals = { requests: number; promptTokens: number; completi
 type ResponseMode = "schema" | "object";
 
 const MAX_RATE_RETRY_WAIT_MS = 90_000;
+const MAX_RATE_RETRIES = 3;
 // GPT-OSS spends hidden reasoning tokens from the same max_completion_tokens budget as its answer,
 // so stage budgets sized for Qwen's direct answers leave no room for the JSON itself.
 const REASONING_HEADROOM_TOKENS = 800;
@@ -101,24 +102,29 @@ export class GroqClient implements WebSearcher {
     this.structuredRequestTail = new Promise<void>((resolve) => { release = resolve; });
     await previous;
     try {
-      return await this.requestWithOneRateRetry(body);
+      return await this.requestWithRateRetries(body);
     } finally {
       release?.();
     }
   }
 
-  private async requestWithOneRateRetry(body: Record<string, unknown>): Promise<GroqResponse> {
-    try {
-      return await this.request(body);
-    } catch (error) {
-      const hintedDelay = error instanceof UpstreamError ? retryHintMs(error.message) : null;
-      // A per-minute (TPM) wait is worth one retry; a minutes-long daily-quota (TPD) wait would only stall the worker.
-      if (hintedDelay === null || hintedDelay > MAX_RATE_RETRY_WAIT_MS) throw error;
-      const waitMs = this.config.NODE_ENV === "test" ? 0 : Math.max(1_000, Math.ceil(hintedDelay + 250));
-      await new Promise<void>((resolve) => setTimeout(resolve, waitMs));
-      return this.request(body);
+  private async requestWithRateRetries(body: Record<string, unknown>): Promise<GroqResponse> {
+    // Per-minute (TPM/OTPM) limits refill within seconds, and back-to-back stages can need more than one wait,
+    // so retry a few times while the total wait stays bounded; a daily-quota (TPD) hint of minutes fails fast.
+    let waitedMs = 0;
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        return await this.request(body);
+      } catch (error) {
+        const hintedDelay = error instanceof UpstreamError ? retryHintMs(error.message) : null;
+        if (hintedDelay === null || attempt >= MAX_RATE_RETRIES || waitedMs + hintedDelay > MAX_RATE_RETRY_WAIT_MS) throw error;
+        waitedMs += hintedDelay;
+        const waitMs = this.config.NODE_ENV === "test" ? 0 : Math.max(1_000, Math.ceil(hintedDelay + 250));
+        await new Promise<void>((resolve) => setTimeout(resolve, waitMs));
+      }
     }
   }
+
 
   private async request(body: Record<string, unknown>): Promise<GroqResponse> {
     let response: Response;
@@ -263,7 +269,7 @@ export class GroqClient implements WebSearcher {
     const model = this.config.GROQ_RETRIEVAL_MODEL;
     const query = args.instruction ? `${args.instruction} ${args.query}` : args.query;
     if (isCompoundModel(model)) {
-      return this.requestWithOneRateRetry({
+      return this.requestWithRateRetries({
         model,
         temperature: 0,
         max_completion_tokens: 450,
@@ -287,7 +293,7 @@ export class GroqClient implements WebSearcher {
     const domainRule = args.includeDomains?.length
       ? ` Search and open ONLY pages on these sites: ${args.includeDomains.join(", ")}.`
       : "";
-    return this.requestWithOneRateRetry({
+    return this.requestWithRateRetries({
       model,
       temperature: 0,
       // Reasoning plus tool calls need far more room than Compound's 450-token answer.
