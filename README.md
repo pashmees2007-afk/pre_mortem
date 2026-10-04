@@ -54,6 +54,8 @@ pnpm install && pnpm check && pnpm test && pnpm build
 
 > The dashboard's example dossier is illustrative and clearly labeled. A live analysis requires a configured secure backend, a project UUID, and a trusted HTTP-only JWT cookie bridge.
 
+See [`DEPLOYMENT.md`](./DEPLOYMENT.md) for deploying the backend to Railway and the dashboard to Vercel.
+
 ## License
 
 [MIT](./LICENSE)
