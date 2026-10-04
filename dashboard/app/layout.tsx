@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Pre-Mortem | Evidence-led sprint decisions",
+  title: "PreMortem | Evidence-led sprint decisions",
   description: "A transparent risk workspace for plan-specific pre-mortem analysis.",
 };
 

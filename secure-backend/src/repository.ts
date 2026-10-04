@@ -319,7 +319,7 @@ export class Repository {
 
   async getAnalysis(runId: string, actor: Actor) {
     const run = await this.pool.query(
-      `SELECT id, status, created_at AS "createdAt", completed_at AS "completedAt", normalized_plan AS "normalizedPlan", failure_code AS "failureCode"
+      `SELECT id, status, plan, created_at AS "createdAt", completed_at AS "completedAt", normalized_plan AS "normalizedPlan", failure_code AS "failureCode"
        FROM analysis_runs WHERE id = $1 AND organization_id = $2`,
       [runId, actor.org_id],
     );

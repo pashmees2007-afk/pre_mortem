@@ -97,11 +97,16 @@ function deDuplicateAcrossBranches(left: EvidenceSource[], right: EvidenceSource
 const GROQ_EVIDENCE_COOLDOWN_MS = 62_000;
 const pause = (milliseconds: number) => new Promise<void>((resolve) => setTimeout(resolve, milliseconds));
 
-function fallbackComparison(a: Scenario, b: Scenario) {
-  const categoryRelation = a.primaryCategory === b.primaryCategory ? "corroborates" : "complements";
+/** A category id such as operational_readiness, as a reader sees it: "operational readiness". */
+const categoryLabel = (category: string) => category.replaceAll("_", " ");
+
+export function fallbackComparison(a: Scenario, b: Scenario) {
+  const sameCategory = a.primaryCategory === b.primaryCategory;
   return {
-    semanticRelation: categoryRelation,
-    explanation: `Branch A focuses on ${a.primaryCategory}, while Branch B focuses on ${b.primaryCategory}; both are retained as independent evidence-limited failure hypotheses.`,
+    semanticRelation: sameCategory ? "corroborates" : "complements",
+    explanation: sameCategory
+      ? `Both branches focus on ${categoryLabel(a.primaryCategory)}; both are retained as independent evidence-limited failure hypotheses.`
+      : `Branch A focuses on ${categoryLabel(a.primaryCategory)}, while Branch B focuses on ${categoryLabel(b.primaryCategory)}; both are retained as independent evidence-limited failure hypotheses.`,
   } satisfies Pick<Comparison, "semanticRelation" | "explanation">;
 }
 

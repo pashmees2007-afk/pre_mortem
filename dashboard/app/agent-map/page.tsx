@@ -10,7 +10,7 @@ const stages = [
 
 export default function AgentMapPage() {
   return <main className="map-page">
-    <header className="map-header"><a className="brand" href="/"><span className="brand-mark">PM</span>Pre-Mortem</a><a className="button quiet" href="/">Open workspace <ArrowRight size={14} /></a></header>
+    <header className="map-header"><a className="brand" href="/"><span className="brand-mark">PM</span>PreMortem</a><a className="button quiet" href="/">Open workspace <ArrowRight size={14} /></a></header>
     <section className="map-hero"><p className="eyebrow">How the agent works</p><h1>One main agent.<br /><em>Many accountable skills.</em></h1><p className="lede">PreMortem is a process, not a single answer. It turns a project plan into independently researched risks, approved actions, and verified learning.</p></section>
     <section className="map-flow" aria-label="PreMortem Agent Map">{stages.map(([number, title, description, Icon], index) => <article className="map-stage" key={number}><div className="map-number">{number}</div><Icon size={20} /><h2>{title}</h2><p>{description}</p>{index < stages.length - 1 && <span className="map-arrow"><ArrowRight size={17} /></span>}</article>)}</section>
     <aside className="map-proof"><ShieldCheck size={19} /><div><strong>Evidence and safety stay in the loop.</strong><span>The browser never receives provider keys or agent instructions. Claims must link to retained evidence, and external actions are not performed without human approval.</span></div></aside>
