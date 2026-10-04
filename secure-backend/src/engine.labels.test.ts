@@ -126,3 +126,28 @@ describe("synthesis labels", () => {
     expect(trace("Decision Skill")).toMatchObject({ status: "attention", metadata: { fallback: true } });
   });
 });
+
+describe("branch angles and risk count", () => {
+  it("gives each branch's scenario writer its own planner angle and query, not the other branch's", async () => {
+    const { engine, groq } = harness();
+    await engine.run(runId);
+    const prompt = (name: string) => groq.strictJson.mock.calls.map(([call]) => call as { name: string; user: string }).find((call) => call.name === name)!.user;
+    expect(prompt("scenario_a")).toContain("RESEARCH_ANGLE");
+    expect(prompt("scenario_a")).toContain("Rollback has not been rehearsed.");
+    expect(prompt("scenario_a")).toContain("kubernetes rollback readiness guidance");
+    expect(prompt("scenario_a")).not.toContain("SRE time is limited to four days.");
+    expect(prompt("scenario_b")).toContain("SRE time is limited to four days.");
+    expect(prompt("scenario_b")).not.toContain("Rollback has not been rehearsed.");
+  });
+
+  it("keeps a synthesis with more than three distinct risks", async () => {
+    const four = (user: string) => {
+      const register = risks(labelsIn(user).slice(0, 1));
+      return { risks: [...register.risks, { ...register.risks[0]!, title: "DNS cutover precedes load testing" }] };
+    };
+    const { engine, completed, trace } = harness({ risk_synthesis: four });
+    await engine.run(runId);
+    expect(completed().synthesis.risks).toHaveLength(4);
+    expect(trace("Decision Skill")).toMatchObject({ metadata: { fallback: false } });
+  });
+});
