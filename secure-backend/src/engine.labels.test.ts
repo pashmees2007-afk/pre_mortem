@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Config } from "./config.js";
 import type { EvidenceSource, InvestigationPlan, PlanFacts, Scenario, Synthesis } from "./contracts.js";
-import { PreMortemEngine, fallbackScenario, labelEvidence } from "./engine.js";
+import { PreMortemEngine, dropCoveredGaps, fallbackScenario, labelEvidence } from "./engine.js";
 import { UpstreamError } from "./errors.js";
 
 const runId = "11111111-1111-4111-8111-111111111111";
@@ -175,5 +175,39 @@ describe("fallback scenario wording", () => {
     const result = fallbackScenario({ branch: "A", facts: { ...facts, missingControls: ["No buffer for audit delays", "a rehearsed rollback procedure"] }, plan, evidence })!;
     expect(result.claims.map((claim) => claim.statement)).toEqual(["The plan has no buffer for audit delays.", "The plan does not yet show a rehearsed rollback procedure."]);
     expect(result.rootCause).toBe("The plan has no buffer for audit delays.");
+  });
+});
+
+describe("missing controls the plan already mitigates", () => {
+  // Facts as the model returned them for a long PRD: two gaps repeat risks the plan states a mitigation for.
+  const extracted: PlanFacts = {
+    ...facts,
+    statedMitigations: [
+      "Tally support load: limit to Tally Prime 4.0+ and guided installer",
+      "SOC 2 delays: start controls and evidence collection in Phase 1",
+      "Regulatory changes: monthly compliance consultant review",
+      "False matches: confidence threshold, reversible write-back, and dry-run mode",
+    ],
+    missingControls: [
+      "No schedule buffer between phases",
+      "No validation plan for 92% auto-match target",
+      "No contingency for Tally support load",
+      "No fallback if SOC 2 audit fails",
+      "No plan for regulatory changes to AA rules",
+    ],
+  };
+
+  it("drops a gap that names every word of a stated risk", () => {
+    expect(dropCoveredGaps(extracted).missingControls).toEqual([
+      "No schedule buffer between phases",
+      "No validation plan for 92% auto-match target",
+      "No fallback if SOC 2 audit fails",
+    ]);
+  });
+
+  it("leaves facts without labelled stated mitigations unchanged", () => {
+    expect(dropCoveredGaps(facts)).toEqual(facts);
+    const unlabelled = { ...extracted, statedMitigations: ["confidence threshold and reversible write-back"] };
+    expect(dropCoveredGaps(unlabelled).missingControls).toEqual(extracted.missingControls);
   });
 });

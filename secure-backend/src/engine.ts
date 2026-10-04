@@ -146,6 +146,29 @@ function fallbackCritic(args: { plan: InvestigationPlan; comparison: Comparison;
   };
 }
 
+const GAP_STOPWORDS = new Set(["the", "and", "for", "with", "from", "into", "plan", "risk", "not", "yet", "any"]);
+const gapWords = (text: string) => text.toLowerCase().split(/[^a-z0-9]+/)
+  .filter((word) => word.length >= 3 || /^\d+$/.test(word)).filter((word) => !GAP_STOPWORDS.has(word))
+  .map((word) => word.replace(/s$/, ""));
+
+/**
+ * The model sometimes lists a risk under missingControls even though the plan states a mitigation for it.
+ * statedMitigations read "risk: mitigation", so drop a missing control only when it names every word of a
+ * stated risk ("No plan for regulatory changes" vs "Regulatory changes: ..."). A gap that only shares a word
+ * or two with a stated risk, such as an unvalidated accuracy target, stays missing.
+ */
+export function dropCoveredGaps(facts: PlanFacts): PlanFacts {
+  const statedRisks = (facts.statedMitigations ?? [])
+    .map((item) => item.includes(":") ? gapWords(item.slice(0, item.indexOf(":"))) : [])
+    .filter((words) => words.length > 0);
+  if (!statedRisks.length) return facts;
+  const missingControls = facts.missingControls.filter((gap) => {
+    const words = new Set(gapWords(gap));
+    return !statedRisks.some((risk) => risk.every((word) => words.has(word)));
+  });
+  return { ...facts, missingControls };
+}
+
 /**
  * A scenario built from the plan's own facts when the model's scenario cannot be validated, so one bad
  * response no longer fails the whole run. Each claim cites this branch's own retrieved evidence, and the
@@ -244,7 +267,7 @@ export class PreMortemEngine {
     const searchesBeforeRun = this.searcher.getSearchCount?.();
     try {
       await this.repo.clearTransientArtifacts(run.id);
-      const facts = await this.groq.strictJson({
+      const facts = dropCoveredGaps(await this.groq.strictJson({
         name: "plan_facts",
         schema: (await import("./contracts.js")).jsonSchemas.planFacts,
         output: PlanFactsSchema,
@@ -252,7 +275,7 @@ export class PreMortemEngine {
         user: dataBlock("PLAN_DATA", run.plan),
         actorId: run.requestedBy,
         maxCompletionTokens: 800,
-      });
+      }));
 
       await this.repo.recordTrace({
         runId: run.id,
